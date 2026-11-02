@@ -146,7 +146,8 @@ def value_payload(rt: AdapterRuntime, point: Dict[str, Any], regs: Optional[List
         elif isinstance(decoded, int):
             value, value_type = decoded, point["data_type"]
         else:
-            value, value_type = "%.7g" % decoded, "float32"
+            # float32 widened through 7 significant digits so 400.1f becomes 400.1
+            value, value_type = float("%.7g" % decoded), "float32"
         if point["scale"] is not None and isinstance(decoded, int) and not isinstance(decoded, bool):
             engineering = decimal_string(Decimal(decoded) * Decimal(point["scale"]))
     payload: Dict[str, Any] = {

@@ -13,9 +13,18 @@ import (
 )
 
 // EncodeValue converts a value read from OPC UA into JSON that canonicalises
-// identically in every implementation: integers and booleans stay native,
-// floating point numbers become shortest round-trip decimal strings, times
-// become RFC 3339 strings. The second result names the native type.
+// identically in every RFC 8785 implementation. JCS treats every JSON number
+// as an IEEE-754 double, so:
+//
+//   - Boolean, SByte..UInt32 and Float/Double stay native JSON values. A Float
+//     is widened through its shortest round-trip decimal (strconv, 32-bit),
+//     so 0.1f encodes as 0.1 and not 0.10000000149011612.
+//   - Int64 and UInt64 are encoded as decimal strings because values beyond
+//     2^53 would be rounded by canonicalisation.
+//   - DateTime becomes an RFC 3339 string, ByteString base64.
+//
+// The second result names the native OPC UA type so a consumer can restore
+// the original representation.
 func EncodeValue(v any) (any, string) {
 	switch t := v.(type) {
 	case nil:
@@ -29,9 +38,9 @@ func EncodeValue(v any) (any, string) {
 	case int32:
 		return int64(t), "int32"
 	case int64:
-		return t, "int64"
+		return strconv.FormatInt(t, 10), "int64"
 	case int:
-		return int64(t), "int64"
+		return strconv.FormatInt(int64(t), 10), "int64"
 	case uint8:
 		return uint64(t), "uint8"
 	case uint16:
@@ -39,13 +48,13 @@ func EncodeValue(v any) (any, string) {
 	case uint32:
 		return uint64(t), "uint32"
 	case uint64:
-		return t, "uint64"
+		return strconv.FormatUint(t, 10), "uint64"
 	case uint:
-		return uint64(t), "uint64"
+		return strconv.FormatUint(uint64(t), 10), "uint64"
 	case float32:
-		return formatFloat(float64(t), 32), "float32"
+		return widenFloat32(t), "float32"
 	case float64:
-		return formatFloat(t, 64), "float64"
+		return finiteFloat(t), "float64"
 	case string:
 		return t, "string"
 	case time.Time:
@@ -84,16 +93,32 @@ func EncodeValue(v any) (any, string) {
 	return fmt.Sprintf("%v", v), "unknown:" + reflect.TypeOf(v).String()
 }
 
-func formatFloat(f float64, bits int) any {
+// finiteFloat returns f, or nil for NaN and infinities which JSON cannot carry.
+func finiteFloat(f float64) any {
 	if math.IsNaN(f) || math.IsInf(f, 0) {
 		return nil
 	}
-	return strconv.FormatFloat(f, 'g', -1, bits)
+	return f
+}
+
+// widenFloat32 converts a float32 to the float64 whose decimal rendering is
+// the shortest representation that round-trips in 32 bits.
+func widenFloat32(f float32) any {
+	if math.IsNaN(float64(f)) || math.IsInf(float64(f), 0) {
+		return nil
+	}
+	s := strconv.FormatFloat(float64(f), 'g', -1, 32)
+	d, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return float64(f)
+	}
+	return d
 }
 
 // ScaleInteger applies a decimal-point scaling to an integer raw value and
 // returns the engineering value as a decimal string (e.g. 2135 with 1 decimal
-// -> "213.5"). Non-integers are returned unchanged as nil.
+// -> "213.5"). It accepts the encoded forms of EncodeValue: int64/uint64 and
+// their decimal string encodings. Anything else yields nil.
 func ScaleInteger(v any, decimals int) any {
 	var n *big.Int
 	switch t := v.(type) {
@@ -101,6 +126,12 @@ func ScaleInteger(v any, decimals int) any {
 		n = big.NewInt(t)
 	case uint64:
 		n = new(big.Int).SetUint64(t)
+	case string:
+		parsed, ok := new(big.Int).SetString(t, 10)
+		if !ok {
+			return nil
+		}
+		n = parsed
 	default:
 		return nil
 	}

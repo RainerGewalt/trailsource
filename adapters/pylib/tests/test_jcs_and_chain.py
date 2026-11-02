@@ -10,7 +10,8 @@ class JCSTests(unittest.TestCase):
     def test_sorting_and_escaping(self):
         self.assertEqual(canonical_jcs({"b": 1, "a": "x", "c": [2, 1]}), b'{"a":"x","b":1,"c":[2,1]}')
         self.assertEqual(canonical_jcs({"k": 'a"b\\c\nd\te\x01'}), b'{"k":"a\\"b\\\\c\\nd\\te\\u0001"}')
-        self.assertEqual(canonical_jcs({"n": 9007199254740993}), b'{"n":9007199254740993}')
+        # ES6 number semantics: integers beyond 2**53 are doubles.
+        self.assertEqual(canonical_jcs({"n": 9007199254740993}), b'{"n":9007199254740992}')
 
     def test_utf16_key_order(self):
         # U+1D11E (surrogate pair, lead 0xD834) sorts before U+FF21 in UTF-16.
@@ -18,7 +19,23 @@ class JCSTests(unittest.TestCase):
         self.assertEqual(got, '{"\U0001D11E":1,"Ａ":2}')
 
     def test_float_formatting_follows_es6(self):
-        self.assertEqual(canonical_jcs([1.0, 0.5, 1e21, 1e-7]), b"[1,0.5,1e+21,1e-7]")
+        cases = {1.0: "1", 1: "1", 1e21: "1e+21", 1e-7: "1e-7", 0.000001: "0.000001", -0.0: "0", 0: "0",
+                 100.0: "100", 0.1: "0.1", 1.5e300: "1.5e+300", 5e-324: "5e-324",
+                 123456789012345680000.0: "123456789012345680000", 9007199254740993: "9007199254740992",
+                 -42.25: "-42.25", 1e22: "1e+22", 1.25e-6: "0.00000125", 333333333.3333333: "333333333.3333333"}
+        for value, want in cases.items():
+            self.assertEqual(canonical_jcs(value).decode(), want, repr(value))
+        with self.assertRaises(ValueError):
+            canonical_jcs(float("nan"))
+
+    def test_rfc8785_sample(self):
+        import json
+        source = r'''{"numbers": [333333333.33333329, 1E30, 4.50, 2e-3, 0.000000000000000000000000001],
+            "string": "\u20ac$\u000F\u000aA'\u0042\u0022\u005c\\\"\u002f",
+            "literals": [null, true, false]}'''
+        want = ('{"literals":[null,true,false],"numbers":[333333333.3333333,1e+30,4.5,0.002,1e-27],'
+                '"string":"\u20ac$\\u000f\\nA\'B\\"\\\\\\\\\\"/"}')
+        self.assertEqual(canonical_jcs(json.loads(source)), want.encode("utf-8"))
 
 
 def _record(i):

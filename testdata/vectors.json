@@ -122,18 +122,28 @@
       "payload": {
         "a": "quote \" backslash \\ newline \n tab \t ctrl \u0001",
         "big": 9007199254740993,
+        "big_str": "9007199254740993",
         "empty": {},
+        "floats": [
+          1,
+          1e+21,
+          0.1,
+          1e-7,
+          333333333.3333333
+        ],
         "list": [],
         "neg": -42,
         "é": "unicode key",
         "Ａ": "fullwidth A",
         "𝄞": "astral key sorts before U+FF21 in UTF-16"
       },
-      "content_hash": "sha256:023bea4e55675816f7decf528347c6bc5027095cfb9e8294da7fe2e7887c442d",
-      "chain_hash": "sha256:25d6be03b09b5cc896ead2d77f8e34ad33e16a08a1f7ba9ee17703441e98a7d4"
+      "content_hash": "sha256:5a4731bc5fb70bbee37d719346741c840be947bc967e02169fb68ba732584745",
+      "chain_hash": "sha256:c25b00a5d3bf19521451b6c5b40553f130ac0fa2e5ad26bf2a1d9b446c4bc850",
+      "chain_restart": true,
+      "anchor_hash": "sha256:9e785b2e1026dbbdf9ecfa8bbbcc96c0c6ff6ac02e1c9ddfe152e3d271e22fd8"
     },
-    "expected_content_hash": "sha256:023bea4e55675816f7decf528347c6bc5027095cfb9e8294da7fe2e7887c442d",
-    "expected_chain_hash": "sha256:25d6be03b09b5cc896ead2d77f8e34ad33e16a08a1f7ba9ee17703441e98a7d4",
-    "expected_core_jcs": "{\"actor\":{\"auth\":\"none\"},\"content_hash\":\"sha256:023bea4e55675816f7decf528347c6bc5027095cfb9e8294da7fe2e7887c442d\",\"event_type\":\"source.inventory.changed\",\"policy\":{\"hash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"id\":\"none\",\"version\":\"0\"},\"prev_hash\":\"sha256:9e785b2e1026dbbdf9ecfa8bbbcc96c0c6ff6ac02e1c9ddfe152e3d271e22fd8\",\"producer\":{\"id\":\"vector\",\"kind\":\"source-bridge\",\"version\":\"0.0.0\"},\"schema\":\"trail.evidence/1\",\"seq\":1,\"stream_id\":\"vec\",\"time\":{\"recorded_at\":\"2026-01-01T00:00:00.000Z\",\"source\":\"system\"}}"
+    "expected_content_hash": "sha256:5a4731bc5fb70bbee37d719346741c840be947bc967e02169fb68ba732584745",
+    "expected_chain_hash": "sha256:c25b00a5d3bf19521451b6c5b40553f130ac0fa2e5ad26bf2a1d9b446c4bc850",
+    "expected_core_jcs": "{\"actor\":{\"auth\":\"none\"},\"anchor_hash\":\"sha256:9e785b2e1026dbbdf9ecfa8bbbcc96c0c6ff6ac02e1c9ddfe152e3d271e22fd8\",\"chain_restart\":true,\"content_hash\":\"sha256:5a4731bc5fb70bbee37d719346741c840be947bc967e02169fb68ba732584745\",\"event_type\":\"source.inventory.changed\",\"policy\":{\"hash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"id\":\"none\",\"version\":\"0\"},\"prev_hash\":\"sha256:9e785b2e1026dbbdf9ecfa8bbbcc96c0c6ff6ac02e1c9ddfe152e3d271e22fd8\",\"producer\":{\"id\":\"vector\",\"kind\":\"source-bridge\",\"version\":\"0.0.0\"},\"schema\":\"trail.evidence/1\",\"seq\":1,\"stream_id\":\"vec\",\"time\":{\"recorded_at\":\"2026-01-01T00:00:00.000Z\",\"source\":\"system\"}}"
   }
 ]

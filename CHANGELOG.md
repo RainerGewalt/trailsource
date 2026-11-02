@@ -17,7 +17,9 @@ Keep a Changelog; versions follow Semantic Versioning.
   mapping file and the inventory fingerprint as `addressspace` policy.
 - Trail Evidence Record v1 sealing and verification (`internal/evidence`,
   `adapters/pylib/trailsource_evidence`) with shared test vectors in
-  `testdata/vectors.json`.
+  `testdata/vectors.json`; canonicalisation via `github.com/gowebpki/jcs`
+  and a matching stdlib port in Python, cross-checked against the
+  `trail-evidence` reference verifier.
 - Persistent per-stream sequence numbers with `chain_restart` on start.
 - `config_version` as SHA-256 over the canonical configuration with masked
   secret keys.

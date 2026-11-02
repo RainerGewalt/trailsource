@@ -1,16 +1,24 @@
-"""RFC 8785 (JSON Canonicalization Scheme) serialisation.
+"""RFC 8785 (JSON Canonicalization Scheme) serialisation, stdlib only.
 
 Object members are sorted by UTF-16 code units, strings use the minimal
-escaping of RFC 8785 section 3.2.2.2, integers are emitted verbatim. Floats
-are formatted following the ES6 Number::toString rules as far as they are
-needed here; the adapters in this repository never place floats into hashed
-content (floating point values travel as decimal strings), so this branch
-only matters for foreign records.
+escaping of RFC 8785 section 3.2.2.2, numbers are rendered like ECMAScript
+Number.prototype.toString. Integers outside +/-2**53 are treated as IEEE-754
+doubles (9007199254740993 -> 9007199254740992), exactly as the Go
+implementation (github.com/gowebpki/jcs) and the trail-evidence reference do.
+Producers therefore transport 64-bit integers and rounding-sensitive decimals
+as strings.
+
+The number and sorting logic follows the trail-evidence reference Python
+package; TODO(trail-evidence): replace this module with that package once it
+is published.
 """
 from __future__ import annotations
 
 import math
+from decimal import Decimal
 from typing import Any, List
+
+_MAX_SAFE = 2 ** 53
 
 
 def canonical_jcs(value: Any) -> bytes:
@@ -26,10 +34,8 @@ def _write(out: List[str], v: Any) -> None:
         out.append("true")
     elif v is False:
         out.append("false")
-    elif isinstance(v, int):
-        out.append(str(v))
-    elif isinstance(v, float):
-        out.append(_format_float(v))
+    elif isinstance(v, (int, float)):
+        out.append(format_number(v))
     elif isinstance(v, str):
         out.append(_escape(v))
     elif isinstance(v, (list, tuple)):
@@ -40,7 +46,7 @@ def _write(out: List[str], v: Any) -> None:
             _write(out, e)
         out.append("]")
     elif isinstance(v, dict):
-        keys = sorted(v.keys(), key=lambda k: str(k).encode("utf-16-be"))
+        keys = sorted(v.keys(), key=lambda k: str(k).encode("utf-16-be", "surrogatepass"))
         out.append("{")
         for i, k in enumerate(keys):
             if i:
@@ -69,22 +75,30 @@ def _escape(s: str) -> str:
     return "".join(parts)
 
 
-def _format_float(f: float) -> str:
-    if math.isnan(f) or math.isinf(f):
-        raise ValueError("jcs: NaN and Infinity are not representable")
-    if f == 0:
+def format_number(value: Any) -> str:
+    """Render a number like ECMAScript Number.prototype.toString."""
+    if isinstance(value, int):
+        if -_MAX_SAFE <= value <= _MAX_SAFE:
+            return str(value)
+        value = float(value)
+    if math.isnan(value) or math.isinf(value):
+        raise ValueError("jcs: NaN and Infinity are not valid JSON numbers")
+    if value == 0:
         return "0"
-    if f.is_integer() and abs(f) < 1e21:
-        return str(int(f))
-    r = repr(f)
-    if "e" not in r and "E" not in r:
-        return r
-    # ES6 exponent notation: mantissa digits without trailing zeros, "e+N"/"e-N".
-    mant, exp = r.lower().split("e")
-    exp_i = int(exp)
-    if -7 < exp_i < 21:
-        # repr chose exponent form but ES6 would not; expand via Decimal.
-        from decimal import Decimal
-        return format(Decimal(r), "f")
-    sign = "+" if exp_i >= 0 else "-"
-    return "%se%s%d" % (mant, sign, abs(exp_i))
+    sign = "-" if value < 0 else ""
+    tup = Decimal(repr(abs(value))).as_tuple()
+    digits = "".join(str(d) for d in tup.digits).rstrip("0")
+    exponent = int(tup.exponent) + (len(tup.digits) - len(digits))
+    k = len(digits)
+    n = k + exponent  # value = 0.digits * 10**n
+    if k <= n <= 21:
+        body = digits + "0" * (n - k)
+    elif 0 < n <= 21:
+        body = digits[:n] + "." + digits[n:]
+    elif -6 < n <= 0:
+        body = "0." + "0" * (-n) + digits
+    else:
+        e = n - 1
+        mant = digits[0] + ("." + digits[1:] if k > 1 else "")
+        body = "%se%s%d" % (mant, "+" if e >= 0 else "-", abs(e))
+    return sign + body

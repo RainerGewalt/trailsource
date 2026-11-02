@@ -200,10 +200,14 @@ func verifyStream(sid string, recs []parsed, issues *[]Issue) StreamReport {
 				add(IssueAnchorHash, p, seq, "chain_restart without anchor_hash")
 			} else if anchor != prev {
 				add(IssueAnchorHash, p, seq, "chain_restart with prev_hash != anchor_hash")
+			} else if !first && prevHash != "" && anchor != prevHash {
+				// The previous segment is in this journal, so the anchor must
+				// point at its last chain_hash (same rule as the reference verifier).
+				add(IssueAnchorHash, p, seq, fmt.Sprintf("anchor_hash %s does not match the last chain_hash %s of the previous segment", anchor, prevHash))
 			} else {
 				detail := fmt.Sprintf("restart at seq %d, anchor %s", seq, anchor)
-				if !first && prevHash != "" && anchor != prevHash {
-					detail += fmt.Sprintf(" (previous record in file has chain_hash %s)", prevHash)
+				if first {
+					detail += " (previous segment not in this journal)"
 				}
 				add(IssueRestart, p, seq, detail)
 			}

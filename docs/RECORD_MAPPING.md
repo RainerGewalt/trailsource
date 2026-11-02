@@ -29,10 +29,32 @@ Every record is one JSON object (one line in a journal file):
 | `chain_hash` | `sha256:` + hex over JCS of the core members |
 | `context` | informational, not hashed: site, line, device, protocol, endpoint, `config_version`, mapping file name/version/hash, host |
 
-Hashes use SHA-256 over RFC 8785 (JCS) bytes. Floating point values are
-transported as decimal strings inside `payload` so that Go and Python
-canonicalise to identical bytes; integers, booleans, strings and null are
-native JSON.
+Hashes use SHA-256 over RFC 8785 (JCS) bytes. The Go side uses
+`github.com/gowebpki/jcs`, the Python side a stdlib port of the same rules;
+both reproduce `testdata/vectors.json` byte for byte.
+
+### Numbers
+
+RFC 8785 inherits ES6 number semantics: every JSON number is an IEEE-754
+double and is rendered like `Number.prototype.toString` (`1.0` becomes `1`,
+`1e21` becomes `1e+21`). Two consequences for producers:
+
+- Integers outside +/-2^53 would be rounded by canonicalisation
+  (`9007199254740993` hashes as `9007199254740992`). TrailSource therefore
+  encodes OPC UA `Int64` and `UInt64` values as decimal strings. `SByte` to
+  `UInt32` stay JSON integers.
+- Floating point values whose exact decimal rendering matters travel as
+  strings. This applies to `engineering_value` (scaled integers with a
+  configured number of decimals) and to anything derived with exact decimal
+  arithmetic. Raw `Float` and `Double` readings are JSON numbers: `Double` as
+  read; `Float` widened through its shortest 32-bit round-trip decimal, so a
+  `Float` 0.1 hashes as `0.1`, not as `0.10000000149011612`. The Modbus
+  `float32` and CIP `REAL` adapters widen through 7 significant digits in
+  the same spirit. NaN and infinities become `null`.
+
+`value_type` always names the native type so the original representation can
+be restored. Consumers comparing values must not assume more precision than
+the native type offers.
 
 ## OPC UA: `source.value.observed`
 
@@ -45,7 +67,7 @@ native JSON.
 | derived from source id + browse path | `entity_key` | `<source_id>/<lowercase path with non-alphanumerics as "-">`; stable across NodeId changes as long as the path is stable |
 | mapping file rule | `semantic_role`, `semantic_role_source` | `mapping` when a rule matched, `derived` (snake_case of the BrowseName) otherwise |
 | DataType attribute | `data_type` | builtin types as short names (`float64`, `int16`, ...), others as NodeId |
-| Value | `value`, `value_type` | floats as strings (`"187.4"`), DateTime as RFC 3339, ByteString as base64, arrays as arrays |
+| Value | `value`, `value_type` | `Float`/`Double` as JSON numbers, `Int64`/`UInt64` as decimal strings (see Numbers), DateTime as RFC 3339, ByteString as base64, arrays as arrays |
 | mapping `scale_decimals` | `scale_decimals`, `engineering_value` | for PLC-style scaled integers: raw `2135` with 1 decimal gives `"213.5"` |
 | mapping `unit` | `unit` | UN/CEFACT Rec. 20 code where available |
 | StatusCode | `status_code` (hex), `status_name`, `quality` | `quality` is `good`, `uncertain` or `bad` from the top bits |
@@ -89,7 +111,7 @@ stream explainable.
 | table + 0-based address | `native_node_id` | `hr:4` (holding) or `ir:0` (input) |
 | | `table`, `address`, `register_count`, `raw_registers` | raw 16-bit words as read |
 | configured type | `data_type`, `word_order` | `uint16`, `int16`, `bool`, `uint32`, `int32`, `float32`; word order per device |
-| decoded value | `value`, `value_type` | float32 as string with 7 significant digits |
+| decoded value | `value`, `value_type` | `float32` as JSON number widened through 7 significant digits; integers native |
 | configured `scale` | `scale`, `engineering_value` | exact decimal arithmetic |
 | exception response | `status`, `quality` | `exception:<code>` and `bad`; the record is still emitted |
 | | `source_timestamp`, `server_timestamp` | always `null`; Modbus has none, and that absence is information |
@@ -101,7 +123,7 @@ stream explainable.
 |---|---|---|
 | symbolic tag path | `native_node_id`, `name` | e.g. `Program:Robot.Mode` |
 | configured CIP type | `cip_type` | `BOOL`, `DINT`, `REAL`, `STRING` |
-| value | `value`, `value_type` | REAL as string with 7 significant digits |
+| value | `value`, `value_type` | `REAL` as JSON number widened through 7 significant digits; `DINT`/`BOOL`/`STRING` native |
 | | `source_timestamp`, `server_timestamp` | always `null` |
 | | `driver` | `http-shim` in v0.1 |
 
@@ -117,5 +139,9 @@ controller generation and belongs in a transform stage, not in the adapter.
 `trailsource verify <journal>` checks, per stream and in `seq` order:
 schema, recomputed `content_hash`, recomputed `chain_hash`, linkage of
 `prev_hash` (or `anchor_hash` on restart) and `seq` continuity. Restarts are
-reported as information; gaps and hash mismatches are reported as separate
-failure kinds and set a non-zero exit code.
+reported as information when the previous segment is absent or the anchor
+matches its last `chain_hash`; a restart whose anchor contradicts the
+previous segment in the same journal is a break. Gaps and hash mismatches
+are reported as separate failure kinds. Any break sets a non-zero exit code.
+Journals written by TrailSource also verify with the `trail-evidence`
+reference verifier, which applies the same rules.

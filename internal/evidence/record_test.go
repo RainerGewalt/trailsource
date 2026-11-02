@@ -96,7 +96,7 @@ func TestVectors(t *testing.T) {
 	if len(vectors) < 3 {
 		t.Fatalf("expected at least 3 vectors, got %d", len(vectors))
 	}
-	var all strings.Builder
+	lines := map[string]string{}
 	for _, v := range vectors {
 		var rec Record
 		dec := json.NewDecoder(strings.NewReader(string(v.Record)))
@@ -119,19 +119,19 @@ func TestVectors(t *testing.T) {
 			t.Errorf("%s: core jcs\n got %s\nwant %s", v.Name, core, v.ExpectedCoreJCS)
 		}
 		line, _ := json.Marshal(rec)
-		all.Write(line)
-		all.WriteByte('\n')
+		single, err := VerifyJournal(strings.NewReader(string(line) + "\n"))
+		if err != nil || !single.OK() {
+			t.Errorf("%s: vector must verify on its own: %v %+v", v.Name, err, single.Issues)
+		}
+		lines[v.Name] = string(line)
 	}
-	// The vectors form one valid stream (genesis, successor, restart) and
-	// must pass the generic verifier as a journal.
-	rep, err := VerifyJournal(strings.NewReader(all.String()))
+	// genesis-minimal followed by unicode-and-escaping (a restart anchored to
+	// it) is one valid journal with exactly one restart.
+	rep, err := VerifyJournal(strings.NewReader(lines["genesis-minimal"] + "\n" + lines["unicode-and-escaping"] + "\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !rep.OK() {
-		t.Errorf("verifier rejected vectors: %+v", rep.Issues)
-	}
-	if len(rep.Streams) != 1 || rep.Streams[0].Restarts != 1 {
-		t.Errorf("unexpected stream report %+v", rep.Streams)
+	if !rep.OK() || len(rep.Streams) != 1 || rep.Streams[0].Restarts != 1 {
+		t.Errorf("combined vector journal: %+v %+v", rep.Streams, rep.Issues)
 	}
 }

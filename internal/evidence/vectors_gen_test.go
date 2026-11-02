@@ -38,17 +38,25 @@ func TestGenerateVectors(t *testing.T) {
 	if err := Seal(&sealedV1); err != nil {
 		t.Fatal(err)
 	}
+	// v3 is a restart anchored to v1's chain_hash so that it verifies on its
+	// own and as the successor of v1 in one journal. Its payload exercises RFC 8785:
+	// ES6 numbers (1.0 -> 1, 1e21 -> 1e+21, 9007199254740993 -> 9007199254740992),
+	// escaping and UTF-16 member order.
 	v3 := baseRecord()
 	v3.Seq = 1
+	v3.ChainRestart = true
+	v3.AnchorHash = sealedV1.ChainHash
 	v3.PrevHash = sealedV1.ChainHash
 	v3.EventType = "source.inventory.changed"
 	v3.Payload = map[string]any{
-		"é":          "unicode key",
+		"\u00e9":     "unicode key",
 		"a":          "quote \" backslash \\ newline \n tab \t ctrl \u0001",
 		"big":        int64(9007199254740993),
+		"big_str":    "9007199254740993",
+		"floats":     []any{1.0, 1e21, 0.1, 1e-7, 333333333.3333333},
 		"neg":        -42,
 		"\U0001D11E": "astral key sorts before U+FF21 in UTF-16",
-		"Ａ":          "fullwidth A",
+		"\uFF21":     "fullwidth A",
 		"empty":      map[string]any{},
 		"list":       []any{},
 	}

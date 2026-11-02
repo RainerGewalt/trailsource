@@ -38,9 +38,11 @@ second stage and deliberately minimal.
   timestamps is recorded explicitly as `null`.
 
 The record format is the Trail Evidence Record v1 (see
-`docs/RECORD_MAPPING.md`). It is produced here by a small internal
-implementation; the shared `trail-evidence` library will replace it once
-published, and `testdata/vectors.json` is the contract both must meet.
+`docs/RECORD_MAPPING.md`). Canonicalisation uses `github.com/gowebpki/jcs`
+(Go) and a stdlib port of the same rules (Python); sealing and verification
+live in a small internal package until the shared `trail-evidence` library
+replaces it. `testdata/vectors.json` is the contract, and journals written
+by TrailSource verify with the `trail-evidence` reference verifier.
 
 ## What it does not do
 

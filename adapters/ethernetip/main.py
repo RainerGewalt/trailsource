@@ -59,7 +59,8 @@ def encode(value: Any, cip_type: str) -> Any:
     if value is None or isinstance(value, bool) or isinstance(value, int):
         return value, ("null" if value is None else "bool" if isinstance(value, bool) else "int")
     if isinstance(value, float):
-        return (decimal_string(round(value, 6)), "float") if cip_type != "REAL" else ("%.7g" % value, "float32")
+        # REAL is float32: widen through 7 significant digits; LREAL stays as read.
+        return (float("%.7g" % value), "float32") if cip_type == "REAL" else (value, "float64")
     return str(value), "string"
 
 

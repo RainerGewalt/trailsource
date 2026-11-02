@@ -15,7 +15,7 @@ class VectorTests(unittest.TestCase):
         self.assertGreaterEqual(len(self.vectors), 3)
 
     def test_vectors_reproduce_byte_for_byte(self):
-        sealed = []
+        sealed = {}
         for v in self.vectors:
             rec = dict(v["record"])
             rec.pop("content_hash", None)
@@ -24,8 +24,10 @@ class VectorTests(unittest.TestCase):
             self.assertEqual(rec["content_hash"], v["expected_content_hash"], v["name"])
             self.assertEqual(rec["chain_hash"], v["expected_chain_hash"], v["name"])
             self.assertEqual(canonical_jcs(core_of(rec)).decode("utf-8"), v["expected_core_jcs"], v["name"])
-            sealed.append(rec)
-        report = verify_records(sealed)
+            single = verify_records([rec])
+            self.assertTrue(single.ok, (v["name"], single.issues))
+            sealed[v["name"]] = rec
+        report = verify_records([sealed["genesis-minimal"], sealed["unicode-and-escaping"]])
         self.assertTrue(report.ok, report.issues)
         self.assertEqual(report.streams["vec"]["restarts"], 1)
 

@@ -100,3 +100,19 @@ func TestVerifyReportsRestartSeparately(t *testing.T) {
 		t.Fatalf("restart not counted: %+v", rep.Streams[0])
 	}
 }
+
+func TestVerifyRestartWithWrongAnchorIsBreak(t *testing.T) {
+	recs := sealedChain(t, 2)
+	r := baseRecord()
+	r.Seq = 7
+	r.ChainRestart = true
+	r.AnchorHash = GenesisHash // previous segment is present, so genesis is wrong
+	r.PrevHash = GenesisHash
+	if err := Seal(&r); err != nil {
+		t.Fatal(err)
+	}
+	rep, _ := VerifyJournal(strings.NewReader(journal(append(recs, r))))
+	if rep.OK() || rep.Streams[0].Breaks != 1 || rep.Streams[0].Restarts != 0 {
+		t.Fatalf("mismatching anchor must be a break: %+v %+v", rep.Streams[0], rep.Issues)
+	}
+}

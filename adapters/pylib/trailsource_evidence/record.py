@@ -177,6 +177,8 @@ def _verify_stream(sid: str, recs: List[tuple], report: Report) -> None:
                 add("anchor_hash", idx, seq, "chain_restart without anchor_hash")
             elif anchor != prev:
                 add("anchor_hash", idx, seq, "chain_restart with prev_hash != anchor_hash")
+            elif not first and prev_hash and anchor != prev_hash:
+                add("anchor_hash", idx, seq, "anchor_hash %s does not match the last chain_hash %s of the previous segment" % (anchor, prev_hash))
             else:
                 add("restart", idx, seq, "restart at seq %d, anchor %s" % (seq, anchor))
         elif first:

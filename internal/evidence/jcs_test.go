@@ -19,10 +19,12 @@ func TestCanonicalJCSEscaping(t *testing.T) {
 	}
 }
 
-func TestCanonicalJCSPreservesLargeIntegers(t *testing.T) {
-	b, _ := CanonicalJCS(map[string]any{"n": int64(9007199254740993)})
-	if got, want := string(b), `{"n":9007199254740993}`; got != want {
-		t.Fatalf("large int rounded: %s", got)
+func TestCanonicalJCSES6Numbers(t *testing.T) {
+	// RFC 8785 numbers are IEEE-754 doubles with ES6 formatting; integers
+	// beyond 2^53 lose precision, which is why producers send them as strings.
+	b, _ := CanonicalizeJSON([]byte(`{"big":9007199254740993,"f":1.0,"e":1E21,"s":0.1,"m":1e-7}`))
+	if got, want := string(b), `{"big":9007199254740992,"e":1e+21,"f":1,"m":1e-7,"s":0.1}`; got != want {
+		t.Fatalf("got %s want %s", got, want)
 	}
 }
 
