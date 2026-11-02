@@ -1,0 +1,58 @@
+# Semantic roles for the extrusion line. Exact `path` rules win over `pattern`
+# rules; `*` matches one browse-path segment. Units are UN/CEFACT Rec. 20
+# codes where one exists. The file's hash travels in record context.mapping.
+version: "2026-11-02"
+description: Extrusion line Line01 / Extruder01 (demo)
+rules:
+  - path: Plant.Line01.Extruder01.MachineState
+    semantic_role: machine_state
+    context: true
+  - path: Plant.Line01.Extruder01.RecipeId
+    semantic_role: recipe_id
+    context: true
+  - path: Plant.Line01.Extruder01.OrderId
+    semantic_role: order_id
+    context: true
+  - path: Plant.Line01.Extruder01.BatchId
+    semantic_role: batch_id
+    context: true
+  - path: Plant.Line01.Extruder01.ScrewSpeedRpm
+    semantic_role: screw_speed
+    unit: RPM
+  - path: Plant.Line01.Extruder01.ScrewTorquePct
+    semantic_role: screw_torque
+    unit: P1
+  - path: Plant.Line01.Extruder01.MeltPressureBar
+    semantic_role: melt_pressure
+    unit: BAR
+  - path: Plant.Line01.Extruder01.MeltTempC
+    semantic_role: melt_temperature
+    unit: CEL
+  - pattern: Plant.Line01.Extruder01.BarrelZone*.TempActualC
+    semantic_role: barrel_zone_temp_actual
+    unit: CEL
+  - pattern: Plant.Line01.Extruder01.BarrelZone*.TempSetpointC
+    semantic_role: barrel_zone_temp_setpoint
+    unit: CEL
+  - pattern: Plant.Line01.Extruder01.BarrelZone*.TempActualRaw
+    semantic_role: barrel_zone_temp_actual_raw
+    unit: CEL
+    scale_decimals: 1            # PLC exports 2135 for 213.5 degC
+  - path: Plant.Line01.Extruder01.HaulOff.SpeedMPerMin
+    semantic_role: haul_off_speed
+    unit: 2X                     # metre per minute
+  - path: Plant.Line01.Extruder01.HaulOff.TorquePct
+    semantic_role: haul_off_torque
+    unit: P1
+  - path: Plant.Line01.Extruder01.Saw.PieceCounter
+    semantic_role: piece_counter
+    unit: C62
+  - path: Plant.Line01.Extruder01.Saw.CutLengthMm
+    semantic_role: cut_length
+    unit: MMT
+  - path: Plant.Line01.Extruder01.Alarms.AlarmWord1
+    semantic_role: alarm_word_1
+  - path: Plant.Line01.Extruder01.Alarms.AlarmWord2
+    semantic_role: alarm_word_2
+  - path: Plant.Line01.Extruder01.SourceTimestamp
+    semantic_role: source_timestamp

@@ -1,0 +1,67 @@
+# TrailSource EtherNet/IP adapter configuration (demo robot cell).
+# v0.1 driver: http-shim against sim/ethernetip. See adapters/ethernetip/main.py.
+revision: "1"
+
+producer:
+  id: trailsource-ethernetip-robot-cell-01
+
+site: plant-a
+line: ext-01
+device: robot-cell-01
+
+source:
+  id: plant-a-ext-01-robot-cell-01-ethernet-ip
+  protocol: ethernet_ip
+  driver: http-shim
+  url: http://ethernetip-sim:8080/tags
+  poll_interval_s: 1.0
+  timeout_s: 3
+  session_backoff_s: 5
+  tags:                          # this list is the source's address space
+    - name: Program:Robot.Mode
+      semantic_role: robot_mode
+      type: STRING
+    - name: Program:Robot.ProgramName
+      semantic_role: robot_program
+      type: STRING
+    - name: Program:Robot.CycleCount
+      semantic_role: cycle_count
+      type: DINT
+      unit: C62
+    - name: Program:Robot.CycleTimeS
+      semantic_role: cycle_time
+      type: REAL
+      unit: SEC
+    - name: Program:Robot.ServoLoadPct
+      semantic_role: servo_load
+      type: REAL
+      unit: P1
+    - name: Program:Robot.ToolTempC
+      semantic_role: tool_temperature
+      type: REAL
+      unit: CEL
+    - name: Program:Safety.GateClosed
+      semantic_role: safety_gate_closed
+      type: BOOL
+    - name: Program:Cell.PartsGood
+      semantic_role: parts_good
+      type: DINT
+      unit: C62
+    - name: Program:Cell.PartsReject
+      semantic_role: parts_reject
+      type: DINT
+      unit: C62
+
+mqtt:
+  broker: tcp://mosquitto:1883
+  client_id: trailsource-ethernetip-robot-cell-01
+  username: "${TRAILSOURCE_MQTT_USERNAME}"
+  password: "${TRAILSOURCE_MQTT_PASSWORD}"
+  qos: 1
+  topic_prefix: trailsource/plant-a/ext-01/robot-cell-01
+  health_interval_s: 15
+
+state_dir: /state
+journal:
+  enabled: true
+  path: /journal/plant-a-ext-01-robot-cell-01-ethernet-ip.jsonl

@@ -1,0 +1,55 @@
+# TrailSource OPC UA adapter configuration (example for the demo stack).
+# Dollar-brace placeholders (NAME inside the braces) are expanded from the
+# environment at start-up. Secret keys (password, username, token, ...) are
+# masked before config_version is computed, so rotating a secret does not
+# change the hash.
+revision: "1"
+
+producer:
+  id: trailsource-opcua-extruder-01
+
+site: plant-a
+line: ext-01
+device: extruder-01
+
+source:
+  id: plant-a-ext-01-extruder-01-opcua
+  endpoint: opc.tcp://opcua-sim:4840/trailsource
+  security_policy: None          # lab only; use Basic256Sha256 + SignAndEncrypt against real servers
+  security_mode: None
+  auth: anonymous                # anonymous | username
+  username: "${TRAILSOURCE_OPCUA_USERNAME}"
+  password: "${TRAILSOURCE_OPCUA_PASSWORD}"
+  browse_roots:
+    - "ns=2;s=Plant"             # browse below the plant object only
+  max_depth: 16
+  max_nodes: 2500
+  subscription_interval_ms: 500
+  subscription_batch_size: 50
+  rebrowse_interval_s: 30
+  session_backoff_s: 5
+  request_timeout_s: 12
+
+mqtt:
+  broker: tcp://mosquitto:1883   # TrailMQ: ssl://trailmq:8883 with tls.enabled: true
+  client_id: trailsource-opcua-extruder-01
+  username: "${TRAILSOURCE_MQTT_USERNAME}"
+  password: "${TRAILSOURCE_MQTT_PASSWORD}"
+  qos: 1
+  topic_prefix: trailsource/plant-a/ext-01/extruder-01
+  publish_node_topics: false
+  health_interval_s: 15
+  tls:
+    enabled: false
+    ca_cert: ""
+    client_cert: ""
+    client_key: ""
+    insecure_skip_verify: false
+    server_name: ""
+
+mapping_file: /config/mapping/extruder.yaml
+state_dir: /state
+
+journal:
+  enabled: true
+  path: /journal/plant-a-ext-01-extruder-01-opcua.jsonl

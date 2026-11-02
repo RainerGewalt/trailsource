@@ -1,0 +1,122 @@
+# TrailSource demo stack: three simulated sources, three adapters, one broker.
+#
+#   make demo      build and start everything
+#   make verify    verify the journals the adapters wrote to ./.demo/journal
+#
+# The broker is Mosquitto so the stack has no dependency on TrailMQ. To route
+# the records through TrailMQ instead, replace the mosquitto service with your
+# TrailMQ backend and point mqtt.broker in configs/*.yaml at it, e.g.
+# ssl://trailmq:8883 with mqtt.tls.enabled: true and credentials via
+# TRAILSOURCE_MQTT_USERNAME / TRAILSOURCE_MQTT_PASSWORD.
+
+x-common: &common
+  restart: unless-stopped
+  networks: [trailsource]
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+x-adapter-env: &adapter-env
+  LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+  TRAILSOURCE_MQTT_USERNAME: "${TRAILSOURCE_MQTT_USERNAME:-}"
+  TRAILSOURCE_MQTT_PASSWORD: "${TRAILSOURCE_MQTT_PASSWORD:-}"
+  TRAILSOURCE_OPCUA_USERNAME: "${TRAILSOURCE_OPCUA_USERNAME:-}"
+  TRAILSOURCE_OPCUA_PASSWORD: "${TRAILSOURCE_OPCUA_PASSWORD:-}"
+
+services:
+  mosquitto:
+    <<: *common
+    image: eclipse-mosquitto:2.0
+    container_name: trailsource_mosquitto
+    ports:
+      - "${MQTT_PORT:-1883}:1883"
+    volumes:
+      - ./deploy/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h localhost -p 1883 -t '$$SYS/#' -C 1 -W 3 >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  opcua-sim:
+    <<: *common
+    build: ./sim/opcua
+    container_name: trailsource_opcua_sim
+    environment:
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      SIM_INTERVAL_SECONDS: "1.0"
+      SIM_ADD_NODE_AFTER_S: "${SIM_ADD_NODE_AFTER_S:-120}"
+    ports:
+      - "${OPCUA_PORT:-4840}:4840"
+
+  modbus-sim:
+    <<: *common
+    build: ./sim/modbus
+    container_name: trailsource_modbus_sim
+    environment:
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+    ports:
+      - "${MODBUS_PORT:-5020}:5020"
+
+  ethernetip-sim:
+    <<: *common
+    build: ./sim/ethernetip
+    container_name: trailsource_ethernetip_sim
+    environment:
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+    ports:
+      - "${ENIP_SHIM_PORT:-8080}:8080"
+
+  opcua-adapter:
+    <<: *common
+    build:
+      context: .
+      args: { VERSION: "${TRAILSOURCE_VERSION:-0.1.0-dev}" }
+    container_name: trailsource_opcua_adapter
+    depends_on:
+      mosquitto: { condition: service_healthy }
+      opcua-sim: { condition: service_started }
+    environment: *adapter-env
+    command: ["run", "--config", "/config/opcua-extruder.yaml"]
+    volumes:
+      - ./configs:/config:ro
+      - ./.demo/state:/state
+      - ./.demo/journal:/journal
+
+  modbus-adapter:
+    <<: *common
+    build: ./adapters
+    container_name: trailsource_modbus_adapter
+    depends_on:
+      mosquitto: { condition: service_healthy }
+      modbus-sim: { condition: service_started }
+    environment:
+      <<: *adapter-env
+      ADAPTER: modbus
+      TRAILSOURCE_CONFIG: /config/modbus-energy-meter.yaml
+      TRAILSOURCE_VERSION: "${TRAILSOURCE_VERSION:-0.1.0-dev}"
+    volumes:
+      - ./configs:/config:ro
+      - ./.demo/state:/state
+      - ./.demo/journal:/journal
+
+  ethernetip-adapter:
+    <<: *common
+    build: ./adapters
+    container_name: trailsource_ethernetip_adapter
+    depends_on:
+      mosquitto: { condition: service_healthy }
+      ethernetip-sim: { condition: service_started }
+    environment:
+      <<: *adapter-env
+      ADAPTER: ethernetip
+      TRAILSOURCE_CONFIG: /config/ethernetip-robot-cell.yaml
+      TRAILSOURCE_VERSION: "${TRAILSOURCE_VERSION:-0.1.0-dev}"
+    volumes:
+      - ./configs:/config:ro
+      - ./.demo/state:/state
+      - ./.demo/journal:/journal
+
+networks:
+  trailsource:
+    name: trailsource_net

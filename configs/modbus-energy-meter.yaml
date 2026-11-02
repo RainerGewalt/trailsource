@@ -1,0 +1,83 @@
+# TrailSource Modbus TCP adapter configuration (demo energy meter).
+revision: "1"
+
+producer:
+  id: trailsource-modbus-energy-meter-01
+
+site: plant-a
+line: ext-01
+device: energy-meter-01
+
+source:
+  id: plant-a-ext-01-energy-meter-01-modbus
+  protocol: modbus_tcp
+  host: modbus-sim
+  port: 5020
+  unit_id: 1
+  poll_interval_s: 1.0
+  timeout_s: 3
+  session_backoff_s: 5
+  word_order: big                # register order of 32-bit values on this device
+  points:                        # this list is the source's address space
+    - name: LineVoltageV
+      semantic_role: line_voltage
+      table: holding
+      address: 0
+      type: float32
+      unit: VLT
+    - name: PhaseCurrentA
+      semantic_role: phase_current
+      table: holding
+      address: 2
+      type: float32
+      unit: AMP
+    - name: ActivePowerKw
+      semantic_role: active_power
+      table: holding
+      address: 4
+      type: float32
+      unit: KWT
+    - name: EnergyKwh
+      semantic_role: energy_consumed
+      table: holding
+      address: 6
+      type: float32
+      unit: KWH
+    - name: AlarmWord
+      semantic_role: alarm_word
+      table: holding
+      address: 8
+      type: uint16
+    - name: MeterStatus
+      semantic_role: meter_status
+      table: holding
+      address: 9
+      type: uint16
+    - name: CabinetTempC
+      semantic_role: cabinet_temperature
+      table: input
+      address: 0
+      type: int16
+      scale: "0.1"
+      unit: CEL
+    - name: FrequencyHz
+      semantic_role: grid_frequency
+      table: input
+      address: 1
+      type: uint16
+      scale: "0.01"
+      unit: HTZ
+
+mqtt:
+  broker: tcp://mosquitto:1883
+  client_id: trailsource-modbus-energy-meter-01
+  username: "${TRAILSOURCE_MQTT_USERNAME}"
+  password: "${TRAILSOURCE_MQTT_PASSWORD}"
+  qos: 1
+  topic_prefix: trailsource/plant-a/ext-01/energy-meter-01
+  health_interval_s: 15
+
+state_dir: /state
+journal:
+  enabled: true
+  path: /journal/plant-a-ext-01-energy-meter-01-modbus.jsonl
