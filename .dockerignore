@@ -1,0 +1,6 @@
+.git
+.demo
+bin
+dist
+**/__pycache__
+**/.venv

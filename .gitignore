@@ -1,0 +1,19 @@
+# build output
+/bin/
+/dist/
+*.test
+*.out
+coverage.out
+
+# demo runtime data (chain state, journals, snapshots)
+/.demo/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# editors
+.idea/
+.vscode/
+*.swp
