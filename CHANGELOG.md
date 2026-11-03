@@ -48,6 +48,17 @@ marked as preview.
   writes the client certificate to `own/`.
 - Liveness read of `ServerStatus.CurrentTime` every `liveness_interval_s`:
   a half-open connection ends as `source.connection_lost`.
+- Keep-alive supervision of the subscription (`keepalive_interval_s`,
+  default 10): a heartbeat item on `ServerStatus.CurrentTime`, and no
+  publish response within the revised MaxKeepAliveCount times the revised
+  publishing interval, times 1.5, records `source.subscription_stalled`
+  (`source.subscription.changed`), rebuilds the subscription and declares
+  the interval as `common.gap` (`source.data.gap`). Scenario
+  `silent-subscription` with `scripts/tcp_relay.py --mode drop-publish`.
+- `source.password_file` (mode 0600 or stricter, otherwise refused).
+- Interop matrix: both servers with Basic256Sha256, Aes128_Sha256_RsaOaep
+  and Aes256_Sha256_RsaPss in Sign and SignAndEncrypt, anonymous and (Milo)
+  username login; all journals `valid` with trail-evidence v0.2.0.
 - Browse roots in namespace-URI form (`nsu=<uri>;<id>`).
 - `scripts/check_bindings.py`: fails when an `entity_key` belongs to two
   nodes or a node to two keys.

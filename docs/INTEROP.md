@@ -208,3 +208,63 @@ re-browses (no items added or removed), recorded 1,107 records with string
 `seq`, and verified with TrailSource and with the local working state of
 the trail-evidence reference verifier; `scripts/check_bindings.py` found
 48 keys for 48 nodes.
+
+## 2026-11-03, evening: security policies and user login
+
+Every combination of security policy, message security mode and login
+that the two servers offer and the OPC UA stack implements, 15 s per case
+with the adapter (`run`), each journal checked with the trail-evidence
+reference verifier as tagged `v0.2.0`. Trust list as above; the umati
+server certificate (`CN=UmatiSampleServer@localhost`, URI
+`urn:UmatiSampleServer`, DNS `opcua.umati.app`, valid until 2027-01-06,
+thumbprint `ab921e63916856e2d9150e3d91086559973c13ca`) was rejected on the
+first attempt, checked and moved to `trusted/certs`. Login with the
+account the Milo demo server documents (`User`, role AuthenticatedUser;
+the password from a file with mode 0600, `source.password_file`); umati
+offers no username token. Values differ by server and policy because the
+two servers change their values at different rates; "Values" counts
+`source.value.observed` records.
+
+| Server | Policy | Mode | Login | Session | Values in 15 s | Verdict (v0.2.0) |
+|---|---|---|---|---|---|---|
+| Eclipse Milo demo | None | None | anonymous | `source.connection_established` | 306 | valid |
+| Eclipse Milo demo | None | None | username | `source.connection_established` | 306 | valid |
+| Eclipse Milo demo | Basic256Sha256 | Sign | anonymous | `source.connection_established` | 304 | valid |
+| Eclipse Milo demo | Basic256Sha256 | Sign | username | `source.connection_established` | 284 | valid |
+| Eclipse Milo demo | Basic256Sha256 | SignAndEncrypt | anonymous | `source.connection_established` | 308 | valid |
+| Eclipse Milo demo | Basic256Sha256 | SignAndEncrypt | username | `source.connection_established` | 282 | valid |
+| Eclipse Milo demo | Aes128_Sha256_RsaOaep | Sign | anonymous | `source.connection_established` | 305 | valid |
+| Eclipse Milo demo | Aes128_Sha256_RsaOaep | Sign | username | `source.connection_established` | 306 | valid |
+| Eclipse Milo demo | Aes128_Sha256_RsaOaep | SignAndEncrypt | anonymous | `source.connection_established` | 281 | valid |
+| Eclipse Milo demo | Aes128_Sha256_RsaOaep | SignAndEncrypt | username | `source.connection_established` | 281 | valid |
+| Eclipse Milo demo | Aes256_Sha256_RsaPss | Sign | anonymous | `source.connection_established` | 307 | valid |
+| Eclipse Milo demo | Aes256_Sha256_RsaPss | Sign | username | `source.connection_established` | 305 | valid |
+| Eclipse Milo demo | Aes256_Sha256_RsaPss | SignAndEncrypt | anonymous | `source.connection_established` | 305 | valid |
+| Eclipse Milo demo | Aes256_Sha256_RsaPss | SignAndEncrypt | username | `source.connection_established` | 284 | valid |
+| umati Sample-Server | None | None | anonymous | `source.connection_established` | 101 | valid |
+| umati Sample-Server | Basic256Sha256 | Sign | anonymous | `source.connection_established` | 74 | valid |
+| umati Sample-Server | Basic256Sha256 | SignAndEncrypt | anonymous | `source.connection_established` | 101 | valid |
+| umati Sample-Server | Aes128_Sha256_RsaOaep | Sign | anonymous | `source.connection_established` | 71 | valid |
+| umati Sample-Server | Aes128_Sha256_RsaOaep | SignAndEncrypt | anonymous | `source.connection_established` | 101 | valid |
+| umati Sample-Server | Aes256_Sha256_RsaPss | Sign | anonymous | `source.connection_established` | 74 | valid |
+| umati Sample-Server | Aes256_Sha256_RsaPss | SignAndEncrypt | anonymous | `source.connection_established` | 101 | valid |
+All 21 sessions were established and every journal is `valid`. Neither
+the user name nor the password appears in any journal or adapter log of
+these runs, and `config_version` is computed with both masked
+(`internal/config` tests).
+
+**A first pass failed for every username case.** Between about 18:50 and
+19:01 UTC the Milo server refused each username session, with every
+policy, with `BadIdentityTokenInvalid`. In the same minutes asyncua logged
+in with the same account, and a capture of both clients' ActivateSession
+requests showed the same token: policy id `username`, user `User`,
+256-byte RSA-OAEP secret, algorithm `http://www.w3.org/2001/04/xmlenc#rsa-oaep`.
+From 19:04 UTC the unchanged binary and configuration logged in, and the
+rerun of all seven username cases above succeeded. Milo returns
+`BadIdentityTokenInvalid` for a nonce mismatch and for refused credentials
+alike; which of the two happened is not known. A user whose login fails
+sees `source.connection_failed` with that status in the journal.
+
+Not covered: certificate and issued-token logins, Basic128Rsa15 and
+Basic256 (deprecated; neither server offers them), and a server that
+refuses an untrusted client certificate.
