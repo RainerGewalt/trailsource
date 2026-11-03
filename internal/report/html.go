@@ -48,7 +48,7 @@ code{background:var(--code);padding:1px 4px;border-radius:4px;word-break:break-a
 .muted{color:var(--muted)}
 dl{display:grid;grid-template-columns:max-content 1fr;gap:2px 12px;margin:0}
 dt{color:var(--muted)}dd{margin:0;word-break:break-word}
-.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.scroll{overflow-x:auto}
 table{border-collapse:collapse;width:100%;font-size:.92em}
 th,td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 th{color:var(--muted);font-weight:500;white-space:nowrap}
