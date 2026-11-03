@@ -199,3 +199,19 @@ func TestNodeGoneTriggersOnlyOnDeletedNodes(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckPinned(t *testing.T) {
+	got := "fa2042bc09ab10367af1d193405c3f25759ba023"
+	if err := checkPinned("", got); err != nil {
+		t.Fatal("no pin must accept any certificate")
+	}
+	if err := checkPinned("FA:20:42:BC:09:AB:10:36:7A:F1:D1:93:40:5C:3F:25:75:9B:A0:23", got); err != nil {
+		t.Fatalf("colons and case must be ignored: %v", err)
+	}
+	if err := checkPinned("0000000000000000000000000000000000000000", got); err == nil {
+		t.Fatal("a different certificate must be refused")
+	}
+	if err := checkPinned(got, ""); err == nil {
+		t.Fatal("a pin on an unsecured session must be refused")
+	}
+}

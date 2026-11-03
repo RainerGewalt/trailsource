@@ -283,6 +283,13 @@ func endpointsCmd(args []string) int {
 	}
 	if len(eps) > 0 {
 		fmt.Printf("server application_uri=%s product_uri=%s\n", eps[0].ApplicationURI, eps[0].ProductURI)
+		seen := map[string]bool{}
+		for _, e := range eps {
+			if e.Thumbprint != "" && !seen[e.Thumbprint] {
+				seen[e.Thumbprint] = true
+				fmt.Printf("server certificate thumbprint (SHA-1) %s\n", e.Thumbprint)
+			}
+		}
 	}
 	return 0
 }

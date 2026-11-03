@@ -62,8 +62,9 @@ type Config struct {
 		RebrowseIntervalS      int      `yaml:"rebrowse_interval_s"`
 		SessionBackoffS        int      `yaml:"session_backoff_s"`
 		RequestTimeoutS        int      `yaml:"request_timeout_s"`
-		BrowseTimeoutS         int      `yaml:"browse_timeout_s"` // whole browse; large address spaces need more
-		ApplicationURI         string   `yaml:"application_uri"`  // without certificate_file; with one, the certificate's URI is used
+		BrowseTimeoutS         int      `yaml:"browse_timeout_s"`  // whole browse; large address spaces need more
+		ApplicationURI         string   `yaml:"application_uri"`   // without certificate_file; with one, the certificate's URI is used
+		ServerThumbprint       string   `yaml:"server_thumbprint"` // SHA-1 of the server certificate; when set, any other certificate is refused
 	} `yaml:"source"`
 
 	MQTT struct {

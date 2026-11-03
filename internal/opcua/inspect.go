@@ -78,6 +78,7 @@ type Endpoint struct {
 	SecurityLevel  uint8    `json:"security_level"`
 	UserTokens     []string `json:"user_tokens"`
 	ApplicationURI string   `json:"application_uri,omitempty"`
+	Thumbprint     string   `json:"server_certificate_thumbprint,omitempty"`
 	ProductURI     string   `json:"product_uri,omitempty"`
 }
 
@@ -93,6 +94,9 @@ func Endpoints(ctx context.Context, url string) ([]Endpoint, error) {
 			SecurityMode: modeName(ep.SecurityMode), SecurityLevel: ep.SecurityLevel}
 		if ep.Server != nil {
 			e.ApplicationURI, e.ProductURI = ep.Server.ApplicationURI, ep.Server.ProductURI
+		}
+		if len(ep.ServerCertificate) > 0 {
+			e.Thumbprint = Thumbprint(ep.ServerCertificate)
 		}
 		for _, t := range ep.UserIdentityTokens {
 			if t != nil {

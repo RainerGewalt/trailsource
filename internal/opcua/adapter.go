@@ -6,12 +6,15 @@ package opcua
 
 import (
 	"context"
+	"crypto/sha1" //nolint:gosec // OPC UA thumbprints
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -255,10 +258,11 @@ func (a *Adapter) seen(t time.Time) {
 }
 
 type sessionInfo struct {
-	Auth           string `json:"auth"`
-	SecurityPolicy string `json:"security_policy"`
-	SecurityMode   string `json:"security_mode"`
-	ServerURI      string `json:"server_uri,omitempty"`
+	Auth             string `json:"auth"`
+	SecurityPolicy   string `json:"security_policy"`
+	SecurityMode     string `json:"security_mode"`
+	ServerURI        string `json:"server_uri,omitempty"`
+	ServerThumbprint string `json:"server_certificate_thumbprint,omitempty"` // SHA-1, secured sessions only
 }
 
 func (a *Adapter) connect(ctx context.Context) (*opcua.Client, sessionInfo, error) {
@@ -298,14 +302,24 @@ func dial(ctx context.Context, cfg *config.Config) (*opcua.Client, sessionInfo, 
 	if err == nil {
 		ep, selErr := opcua.SelectEndpoint(endpoints, policyURI, mode)
 		if selErr == nil && ep != nil {
+			if mode != ua.MessageSecurityModeNone && len(ep.ServerCertificate) > 0 {
+				info.ServerThumbprint = Thumbprint(ep.ServerCertificate)
+			}
+			if err := checkPinned(src.ServerThumbprint, info.ServerThumbprint); err != nil {
+				return nil, info, err
+			}
 			opts = append(opts, opcua.SecurityFromEndpoint(ep, tokenType))
 			if ep.Server != nil {
 				info.ServerURI = ep.Server.ApplicationURI
 			}
+		} else if src.ServerThumbprint != "" {
+			return nil, info, fmt.Errorf("server_thumbprint is set but the server did not offer %s/%s, refusing to connect", src.SecurityPolicy, src.SecurityMode)
 		} else {
 			log.Printf("opc: endpoint %s/%s not offered by server, using explicit settings", src.SecurityPolicy, src.SecurityMode)
 			opts = append(opts, opcua.SecurityPolicy(policyURI), opcua.SecurityMode(mode))
 		}
+	} else if src.ServerThumbprint != "" {
+		return nil, info, fmt.Errorf("server_thumbprint is set but the endpoint list is unavailable (%v), refusing to connect", err)
 	} else {
 		log.Printf("opc: GetEndpoints failed (%v), using explicit settings", err)
 		opts = append(opts, opcua.SecurityPolicy(policyURI), opcua.SecurityMode(mode))
@@ -793,4 +807,31 @@ func nullIfEmpty(s string) any {
 		return nil
 	}
 	return s
+}
+
+// Thumbprint returns the SHA-1 thumbprint of a DER certificate as lowercase
+// hex, the form OPC UA servers and tools display.
+func Thumbprint(der []byte) string {
+	sum := sha1.Sum(der) //nolint:gosec // OPC UA thumbprints are SHA-1 by specification
+	return hex.EncodeToString(sum[:])
+}
+
+// checkPinned compares a configured thumbprint with the one the server
+// presented. Colons, spaces and case are ignored. An empty pin accepts any
+// certificate: gopcua does not validate server certificates against a
+// trust list, so the pin is the only check.
+func checkPinned(pinned, got string) error {
+	if pinned == "" {
+		return nil
+	}
+	norm := func(s string) string {
+		return strings.ToLower(strings.NewReplacer(":", "", " ", "").Replace(s))
+	}
+	if got == "" {
+		return errors.New("server_thumbprint is set but the session is not secured (security_mode None), refusing to connect")
+	}
+	if norm(pinned) != norm(got) {
+		return fmt.Errorf("server certificate thumbprint %s does not match server_thumbprint %s, refusing to connect", got, norm(pinned))
+	}
+	return nil
 }
