@@ -1,0 +1,82 @@
+# GoReleaser configuration. Run by .github/workflows/release.yml on tags v*.
+# Local check: goreleaser check; local dry run: goreleaser release --snapshot --clean
+# The container image is built by the same workflow from ./Dockerfile.
+version: 2
+
+project_name: trailsource
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: trailsource
+    main: ./cmd/trailsource
+    binary: trailsource
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    ids: [trailsource]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - NOTICE
+      - README.md
+      - docs/CONNECT_YOUR_SERVER.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: RainerGewalt
+    name: trailsource
+  prerelease: auto
+  mode: keep-existing
+  header: |
+    `git clone https://github.com/RainerGewalt/trailsource.git && cd trailsource && make sim-venv scenario-inventory-change`
+
+    That runs a simulated OPC UA server, Mosquitto and the adapter as local
+    processes (needs Go, `mosquitto` and Python 3.8+), adds two nodes at
+    runtime and ends with `trailsource verify` and an HTML report. For a
+    server of your own see `docs/CONNECT_YOUR_SERVER.md`.
+
+    **Limits of {{ .Tag }}.** OPC UA only, and read-only: no Write or Call in
+    any configuration. The Modbus TCP and EtherNet/IP adapters in the
+    repository are a preview and not part of this release. Tested logins:
+    anonymous and username; certificate and issued-token logins, a server
+    that refuses an untrusted client certificate and CA-signed server
+    certificates with CRLs are untested outside unit tests
+    (`docs/INTEROP.md`). Details in `CHANGELOG.md`.
+
+    **Install.** Archives below for Linux, macOS and Windows (amd64, arm64),
+    each with `LICENSE`, `NOTICE`, `README.md` and
+    `docs/CONNECT_YOUR_SERVER.md`; `checksums.txt` holds their SHA-256.
+    `go install github.com/RainerGewalt/trailsource/cmd/trailsource@{{ .Tag }}`,
+    or the container image `ghcr.io/rainergewalt/trailsource:{{ .Version }}`
+    (linux/amd64, linux/arm64, non-root, the Go adapter only).
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
