@@ -25,6 +25,7 @@ import (
 	"github.com/RainerGewalt/trailsource/internal/journal"
 	"github.com/RainerGewalt/trailsource/internal/mapping"
 	"github.com/RainerGewalt/trailsource/internal/mqttpub"
+	"github.com/RainerGewalt/trailsource/internal/status"
 )
 
 // Event types emitted by this adapter.
@@ -51,6 +52,12 @@ type Adapter struct {
 	recordsEmitted uint64
 	contextValues  map[string]any // latest values of mapping rules flagged context: true
 	nodesByHandle  map[uint32]*boundNode
+	lastEvent      string // reason code of the latest lifecycle record (docs/STATUS.md)
+	lastSeen       string // when the source last answered: value, browse or connect
+
+	// Owned by the Run goroutine.
+	everConnected bool // a session was established in this process
+	outage        bool // a lost or failed record was emitted and no session since
 }
 
 type boundNode struct {
@@ -63,7 +70,7 @@ func Run(ctx context.Context, cfg *config.Config, version string) error {
 	if cfg.Producer.Version != "" {
 		version = cfg.Producer.Version
 	}
-	a := &Adapter{cfg: cfg, version: version, contextValues: map[string]any{}}
+	a := &Adapter{cfg: cfg, version: version, contextValues: map[string]any{}, lastEvent: status.ChainRestart}
 
 	a.mapping = mapping.Empty()
 	if cfg.MappingFile != "" {
@@ -93,6 +100,7 @@ func Run(ctx context.Context, cfg *config.Config, version string) error {
 
 	will, _ := evidence.CanonicalJCS(map[string]any{
 		"status": "down", "reason": "will", "producer_id": cfg.Producer.ID, "source_id": cfg.Source.ID,
+		"last_event": status.MQTTWill, "last_seen": nil,
 	})
 	pub, err := mqttpub.New(mqttpub.Options{
 		Broker:             cfg.MQTT.Broker,
@@ -140,10 +148,16 @@ func Run(ctx context.Context, cfg *config.Config, version string) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		err := a.session(ctx)
+		connected, err := a.session(ctx)
 		if err != nil && ctx.Err() == nil {
 			log.Printf("opc session ended: %v", err)
 			a.setError(err)
+			if !connected && !a.outage {
+				// Record the first failed attempt of an outage (or of a start
+				// against an unreachable server) once; retries stay silent.
+				a.outage = true
+				a.emitConnection("disconnected", status.ConnectionFailed, err.Error(), a.configuredSession())
+			}
 		}
 		if ctx.Err() != nil {
 			return nil
@@ -167,22 +181,37 @@ func (a *Adapter) setError(err error) {
 	a.lastError = err.Error()
 }
 
-func (a *Adapter) session(ctx context.Context) error {
+// session runs one OPC UA session. connected reports whether the connect
+// succeeded, so the caller can tell a failed attempt from a lost session.
+func (a *Adapter) session(ctx context.Context) (connected bool, err error) {
 	client, sessionInfo, err := a.connect(ctx)
 	if err != nil {
-		return fmt.Errorf("connect: %w", err)
+		return false, fmt.Errorf("connect: %w", err)
 	}
 	a.mu.Lock()
 	a.opcConnected = true
 	a.lastError = ""
 	a.mu.Unlock()
-	a.emitConnection("connected", "", sessionInfo)
+	code := status.ConnectionEstablished
+	if a.everConnected {
+		code = status.ConnectionRestored
+	}
+	a.everConnected, a.outage = true, false
+	a.seen(time.Now())
+	a.emitConnection("connected", code, "", sessionInfo)
 	defer func() {
 		a.mu.Lock()
 		a.opcConnected = false
-		reason := a.lastError
 		a.mu.Unlock()
-		a.emitConnection("disconnected", reason, sessionInfo)
+		code, reason := status.ConnectionLost, "session ended"
+		switch {
+		case ctx.Err() != nil:
+			code, reason = status.ConnectionClosed, "adapter stopping"
+		case err != nil:
+			reason = err.Error()
+		}
+		a.outage = code == status.ConnectionLost
+		a.emitConnection("disconnected", code, reason, sessionInfo)
 		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = client.Close(closeCtx)
@@ -192,23 +221,37 @@ func (a *Adapter) session(ctx context.Context) error {
 	for _, r := range a.cfg.Source.BrowseRoots {
 		nid, err := ua.ParseNodeID(r)
 		if err != nil {
-			return fmt.Errorf("invalid browse root %q: %w", r, err)
+			return true, fmt.Errorf("invalid browse root %q: %w", r, err)
 		}
 		roots = append(roots, nid)
 	}
 
 	for {
 		if ctx.Err() != nil {
-			return nil
+			return true, nil
 		}
 		nodes, err := a.browseAndReconcile(ctx, client, roots, sessionInfo)
 		if err != nil {
-			return err
+			return true, err
 		}
 		if err := a.subscribeUntilRebrowse(ctx, client, nodes); err != nil {
-			return err
+			return true, err
 		}
 	}
+}
+
+// configuredSession describes the session the adapter would open; used for
+// records about failed attempts, where no server answered.
+func (a *Adapter) configuredSession() sessionInfo {
+	src := a.cfg.Source
+	return sessionInfo{Auth: src.Auth, SecurityPolicy: src.SecurityPolicy, SecurityMode: src.SecurityMode}
+}
+
+// seen moves last_seen forward.
+func (a *Adapter) seen(t time.Time) {
+	a.mu.Lock()
+	a.lastSeen = evidence.FormatTime(t)
+	a.mu.Unlock()
 }
 
 type sessionInfo struct {
@@ -219,21 +262,33 @@ type sessionInfo struct {
 }
 
 func (a *Adapter) connect(ctx context.Context) (*opcua.Client, sessionInfo, error) {
-	src := a.cfg.Source
+	return dial(ctx, a.cfg)
+}
+
+// dial opens one read-only OPC UA session as configured. Endpoint security
+// comes from the server's endpoint list when it offers the configured policy
+// and mode; otherwise the explicit settings are used.
+func dial(ctx context.Context, cfg *config.Config) (*opcua.Client, sessionInfo, error) {
+	src := cfg.Source
 	info := sessionInfo{Auth: src.Auth, SecurityPolicy: src.SecurityPolicy, SecurityMode: src.SecurityMode}
 	policyURI := ua.SecurityPolicyURIPrefix + src.SecurityPolicy
 	mode := messageSecurityMode(src.SecurityMode)
 
+	// The stack does not reconnect on its own: every loss ends the session,
+	// is recorded, and the next session browses and subscribes from scratch.
 	opts := []opcua.Option{
-		opcua.RequestTimeout(a.cfg.RequestTimeout()),
-		opcua.AutoReconnect(true),
-		opcua.ReconnectInterval(2 * time.Second),
+		opcua.RequestTimeout(cfg.RequestTimeout()),
+		opcua.AutoReconnect(false),
+		opcua.ApplicationName("TrailSource"),
 	}
 	if src.CertificateFile != "" {
+		// CertificateFile also takes the ApplicationURI from the certificate.
 		opts = append(opts, opcua.CertificateFile(src.CertificateFile), opcua.PrivateKeyFile(src.PrivateKeyFile))
+	} else {
+		opts = append(opts, opcua.ApplicationURI(src.ApplicationURI))
 	}
 
-	epCtx, cancel := context.WithTimeout(ctx, a.cfg.RequestTimeout())
+	epCtx, cancel := context.WithTimeout(ctx, cfg.RequestTimeout())
 	endpoints, err := opcua.GetEndpoints(epCtx, src.Endpoint)
 	cancel()
 	tokenType := ua.UserTokenTypeAnonymous
@@ -270,7 +325,7 @@ func (a *Adapter) connect(ctx context.Context) (*opcua.Client, sessionInfo, erro
 	if err := client.Connect(connectCtx); err != nil {
 		return nil, info, err
 	}
-	log.Printf("opc connected source_id=%s endpoint=%s auth=%s policy=%s mode=%s", a.cfg.Source.ID, src.Endpoint, src.Auth, src.SecurityPolicy, src.SecurityMode)
+	log.Printf("opc connected source_id=%s endpoint=%s auth=%s policy=%s mode=%s", cfg.Source.ID, src.Endpoint, src.Auth, src.SecurityPolicy, src.SecurityMode)
 	return client, info, nil
 }
 
@@ -300,12 +355,21 @@ func (a *Adapter) browseAndReconcile(ctx context.Context, client *opcua.Client, 
 		namespaces = client.Namespaces()
 	}
 
-	browseCtx, cancel := context.WithTimeout(ctx, 4*a.cfg.RequestTimeout())
-	nodes, err := BrowseVariables(browseCtx, client, roots, a.cfg.Source.MaxDepth, a.cfg.Source.MaxNodes, namespaces)
+	browseCtx, cancel := context.WithTimeout(ctx, a.cfg.BrowseTimeout())
+	started := time.Now()
+	res, err := BrowseVariables(browseCtx, client, roots, a.cfg.Source.MaxDepth, a.cfg.Source.MaxNodes, namespaces)
 	cancel()
 	if err != nil {
 		return nil, fmt.Errorf("browse: %w", err)
 	}
+	if st := client.State(); st != opcua.Connected {
+		return nil, fmt.Errorf("browse: connection state %s after browse, result discarded", st)
+	}
+	nodes := res.Nodes
+	if res.Truncated {
+		log.Printf("browse: max_nodes=%d reached after %d nodes visited; the inventory covers a prefix of the address space", a.cfg.Source.MaxNodes, res.Visited)
+	}
+	a.seen(time.Now())
 	items := make([]inventory.Item, 0, len(nodes))
 	for _, n := range nodes {
 		items = append(items, n.Item)
@@ -334,7 +398,8 @@ func (a *Adapter) browseAndReconcile(ctx context.Context, client *opcua.Client, 
 		if previous.Fingerprint == fp {
 			snap.Generation = previous.Generation
 			a.setInventory(fp, snap.Generation)
-			log.Printf("browse complete variables=%d inventory_hash=%s generation=%d unchanged", len(items), fp, snap.Generation)
+			log.Printf("browse complete variables=%d visited=%d truncated=%v took=%s inventory_hash=%s generation=%d unchanged",
+				len(items), res.Visited, res.Truncated, time.Since(started).Round(time.Millisecond), fp, snap.Generation)
 			return nodes, nil
 		}
 		snap.Generation = previous.Generation + 1
@@ -342,10 +407,14 @@ func (a *Adapter) browseAndReconcile(ctx context.Context, client *opcua.Client, 
 		diff = inventory.Compute(previous.Items, items)
 	}
 	a.setInventory(fp, snap.Generation)
-	log.Printf("browse complete variables=%d inventory_hash=%s generation=%d change=%s added=%d removed=%d changed=%d",
-		len(items), fp, snap.Generation, changeKind, len(diff.Added), len(diff.Removed), len(diff.Changed))
+	reasonCode := status.Inventory(changeKind == "initial", len(diff.Added), len(diff.Removed), len(diff.Changed))
+	log.Printf("browse complete variables=%d visited=%d truncated=%v took=%s inventory_hash=%s generation=%d change=%s reason_code=%s added=%d removed=%d changed=%d",
+		len(items), res.Visited, res.Truncated, time.Since(started).Round(time.Millisecond), fp, snap.Generation, changeKind, reasonCode, len(diff.Added), len(diff.Removed), len(diff.Changed))
 
 	payload := map[string]any{
+		"reason_code":          reasonCode,
+		"truncated":            res.Truncated,
+		"browse_limits":        map[string]any{"max_depth": a.cfg.Source.MaxDepth, "max_nodes": a.cfg.Source.MaxNodes},
 		"change_kind":          changeKind,
 		"fingerprint":          fp,
 		"previous_fingerprint": previousFP,
@@ -374,6 +443,7 @@ func (a *Adapter) browseAndReconcile(ctx context.Context, client *opcua.Client, 
 	if err := a.emit(rec, a.cfg.MQTT.TopicPrefix+"/inventory"); err != nil {
 		return nil, fmt.Errorf("emit inventory record: %w", err)
 	}
+	a.setLastEvent(reasonCode)
 	if err := inventory.Save(a.snapshotPath(), snap); err != nil {
 		return nil, fmt.Errorf("save inventory snapshot: %w", err)
 	}
@@ -435,12 +505,20 @@ func (a *Adapter) subscribeUntilRebrowse(ctx context.Context, client *opcua.Clie
 
 	rebrowse := time.NewTimer(a.cfg.RebrowseInterval())
 	defer rebrowse.Stop()
+	// A dead server does not always close the notification channel; the
+	// client state does change, so it is polled once per second.
+	stateCheck := time.NewTicker(time.Second)
+	defer stateCheck.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-rebrowse.C:
 			return nil
+		case <-stateCheck.C:
+			if st := client.State(); st != opcua.Connected {
+				return fmt.Errorf("opc connection state %s", st)
+			}
 		case n, open := <-notifyCh:
 			if !open {
 				return errors.New("opc notification channel closed")
@@ -453,6 +531,7 @@ func (a *Adapter) subscribeUntilRebrowse(ctx context.Context, client *opcua.Clie
 			}
 			if dcn, isDCN := n.Value.(*ua.DataChangeNotification); isDCN {
 				readAt := time.Now()
+				a.seen(readAt)
 				for _, item := range dcn.MonitoredItems {
 					bn, known := byHandle[item.ClientHandle]
 					if !known {
@@ -566,11 +645,12 @@ func (a *Adapter) handleValue(bn *boundNode, dv *ua.DataValue, readAt time.Time)
 	}
 }
 
-func (a *Adapter) emitConnection(state, reason string, session sessionInfo) {
+func (a *Adapter) emitConnection(state, reasonCode, reason string, session sessionInfo) {
 	payload := map[string]any{
-		"state":    state,
-		"endpoint": a.cfg.Source.Endpoint,
-		"session":  session,
+		"state":       state,
+		"reason_code": reasonCode,
+		"endpoint":    a.cfg.Source.Endpoint,
+		"session":     session,
 	}
 	if reason != "" {
 		payload["reason"] = reason
@@ -590,7 +670,16 @@ func (a *Adapter) emitConnection(state, reason string, session sessionInfo) {
 	}
 	if err := a.emit(rec, a.cfg.MQTT.TopicPrefix+"/status"); err != nil {
 		log.Printf("emit connection record failed: %v", err)
+		return
 	}
+	a.setLastEvent(reasonCode)
+	a.publishHealth("up")
+}
+
+func (a *Adapter) setLastEvent(code string) {
+	a.mu.Lock()
+	a.lastEvent = code
+	a.mu.Unlock()
 }
 
 // emit seals, journals and publishes a record, in that order. A record that
@@ -659,10 +748,19 @@ func (a *Adapter) publishHealth(status string) {
 		"mapping_hash":         a.mapping.Hash,
 		"records_emitted":      a.recordsEmitted,
 		"last_error":           a.lastError,
+		"last_event":           a.lastEvent,
+		"last_seen":            nullIfEmpty(a.lastSeen),
 		"ts":                   evidence.FormatTime(time.Now()),
 	}
 	a.mu.Unlock()
 	if err := a.pub.PublishHealth(payload); err != nil {
 		log.Printf("publish health failed: %v", err)
 	}
+}
+
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }

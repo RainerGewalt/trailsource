@@ -61,6 +61,8 @@ type Config struct {
 		RebrowseIntervalS      int      `yaml:"rebrowse_interval_s"`
 		SessionBackoffS        int      `yaml:"session_backoff_s"`
 		RequestTimeoutS        int      `yaml:"request_timeout_s"`
+		BrowseTimeoutS         int      `yaml:"browse_timeout_s"` // whole browse; large address spaces need more
+		ApplicationURI         string   `yaml:"application_uri"`  // without certificate_file; with one, the certificate's URI is used
 	} `yaml:"source"`
 
 	MQTT struct {
@@ -246,6 +248,12 @@ func (c *Config) applyDefaults() {
 	if c.Source.RequestTimeoutS <= 0 {
 		c.Source.RequestTimeoutS = 12
 	}
+	if c.Source.BrowseTimeoutS <= 0 {
+		c.Source.BrowseTimeoutS = 120
+	}
+	if c.Source.ApplicationURI == "" {
+		c.Source.ApplicationURI = "urn:trailsource:client"
+	}
 	if c.Source.ID == "" {
 		c.Source.ID = strings.Trim(strings.Join([]string{tok(c.Site), tok(c.Line), tok(c.Device), "opcua"}, "-"), "-")
 	}
@@ -329,6 +337,9 @@ func (c *Config) SessionBackoff() time.Duration {
 }
 func (c *Config) RequestTimeout() time.Duration {
 	return time.Duration(c.Source.RequestTimeoutS) * time.Second
+}
+func (c *Config) BrowseTimeout() time.Duration {
+	return time.Duration(c.Source.BrowseTimeoutS) * time.Second
 }
 func (c *Config) HealthInterval() time.Duration {
 	return time.Duration(c.MQTT.HealthIntervalS) * time.Second

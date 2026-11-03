@@ -2,6 +2,7 @@ package opcua
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -20,73 +21,154 @@ type VariableNode struct {
 	Item   inventory.Item
 }
 
+// BrowseResult is the outcome of one browse.
+type BrowseResult struct {
+	Nodes []VariableNode
+	// Truncated is true when max_nodes stopped the walk. The inventory is
+	// then a deterministic prefix of the address space, not all of it.
+	Truncated bool
+	// Visited counts every node read, objects and variables.
+	Visited int
+}
+
 // BrowseVariables walks the address space from each root along HasComponent,
 // Organizes and HasProperty references and returns all Variable nodes sorted
 // by browse path. The browse path is the dot-joined chain of BrowseNames
 // below the root (namespace prefixes stripped).
-func BrowseVariables(ctx context.Context, client *opcua.Client, roots []*ua.NodeID, maxDepth, maxNodes int, namespaces []string) ([]VariableNode, error) {
+//
+// A browse never produces a partial inventory by accident: an unreadable root
+// or any transport or session error aborts it with an error, so a dying
+// connection cannot be mistaken for an address space that lost its nodes.
+// Errors that concern a single node (unknown node, access denied) skip that
+// node only.
+func BrowseVariables(ctx context.Context, client *opcua.Client, roots []*ua.NodeID, maxDepth, maxNodes int, namespaces []string) (BrowseResult, error) {
 	if maxDepth <= 0 {
 		maxDepth = 10
 	}
 	if maxNodes <= 0 {
 		maxNodes = 1000
 	}
-	visited := map[string]bool{}
-	out := make([]VariableNode, 0, 64)
+	w := &walker{client: client, maxDepth: maxDepth, maxNodes: maxNodes, visited: map[string]bool{}, namespaces: namespaces}
 	for _, root := range roots {
-		if err := browseNode(ctx, client.Node(root), "", 0, maxDepth, maxNodes, visited, &out, namespaces); err != nil {
-			return nil, err
+		if err := w.node(ctx, client.Node(root), "", 0); err != nil {
+			return BrowseResult{}, err
 		}
 	}
+	out := w.out
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Item.BrowsePath == out[j].Item.BrowsePath {
 			return out[i].Item.NodeID < out[j].Item.NodeID
 		}
 		return out[i].Item.BrowsePath < out[j].Item.BrowsePath
 	})
-	return out, nil
+	return BrowseResult{Nodes: out, Truncated: w.truncated, Visited: len(w.visited)}, nil
 }
 
-func browseNode(ctx context.Context, node *opcua.Node, parentPath string, level, maxDepth, maxNodes int, visited map[string]bool, out *[]VariableNode, namespaces []string) error {
-	if level > maxDepth || len(*out) >= maxNodes {
+type walker struct {
+	client     *opcua.Client
+	maxDepth   int
+	maxNodes   int
+	visited    map[string]bool
+	namespaces []string
+	out        []VariableNode
+	truncated  bool
+}
+
+func (w *walker) full() bool {
+	if len(w.out) >= w.maxNodes {
+		w.truncated = true
+		return true
+	}
+	return false
+}
+
+func (w *walker) node(ctx context.Context, node *opcua.Node, parentPath string, level int) error {
+	if level > w.maxDepth || w.full() {
 		return nil
 	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	key := node.ID.String()
-	if visited[key] {
+	if w.visited[key] {
 		return nil
 	}
-	visited[key] = true
+	w.visited[key] = true
 
-	def, nodeClass, err := readDefinition(ctx, node, parentPath, namespaces)
+	def, nodeClass, err := readDefinition(ctx, node, parentPath, w.namespaces)
 	if err != nil {
+		if level == 0 {
+			return fmt.Errorf("browse root %s unreadable: %w", key, err)
+		}
+		if IsConnectionError(err) {
+			return fmt.Errorf("read %s: %w", key, err)
+		}
 		log.Printf("browse: skip unreadable node=%s err=%v", key, err)
 		return nil
 	}
 	if nodeClass == ua.NodeClassVariable {
-		*out = append(*out, def)
-		if len(*out) >= maxNodes {
+		if w.full() {
 			return nil
 		}
+		w.out = append(w.out, def)
 	}
 	for _, refType := range []uint32{id.HasComponent, id.Organizes, id.HasProperty} {
 		children, err := node.ReferencedNodes(ctx, refType, ua.BrowseDirectionForward, ua.NodeClassAll, true)
 		if err != nil {
+			if IsConnectionError(err) {
+				return fmt.Errorf("browse %s: %w", key, err)
+			}
 			log.Printf("browse: children failed node=%s ref=%d err=%v", key, refType, err)
 			continue
 		}
 		for _, child := range children {
-			if err := browseNode(ctx, child, def.Item.BrowsePath, level+1, maxDepth, maxNodes, visited, out, namespaces); err != nil {
+			if err := w.node(ctx, child, def.Item.BrowsePath, level+1); err != nil {
 				return err
 			}
-			if len(*out) >= maxNodes {
+			if w.truncated {
 				return nil
 			}
 		}
 	}
 	return nil
+}
+
+// nodeLevelStatus lists service results that concern one node only. Every
+// other error during a browse (transport, secure channel, session, timeout)
+// means the browse as a whole cannot be trusted.
+var nodeLevelStatus = map[ua.StatusCode]bool{
+	ua.StatusBadNodeIDUnknown:            true,
+	ua.StatusBadNodeIDInvalid:            true,
+	ua.StatusBadAttributeIDInvalid:       true,
+	ua.StatusBadUserAccessDenied:         true,
+	ua.StatusBadNotReadable:              true,
+	ua.StatusBadNotSupported:             true,
+	ua.StatusBadReferenceTypeIDInvalid:   true,
+	ua.StatusBadBrowseDirectionInvalid:   true,
+	ua.StatusBadNoContinuationPoints:     true,
+	ua.StatusBadContinuationPointInvalid: true,
+	ua.StatusBadViewIDUnknown:            true,
+	ua.StatusBadNodeClassInvalid:         true,
+	ua.StatusBadIndexRangeInvalid:        true,
+	ua.StatusBadDataEncodingInvalid:      true,
+	ua.StatusBadDataEncodingUnsupported:  true,
+	ua.StatusBadTooManyOperations:        true,
+	ua.StatusBadEncodingLimitsExceeded:   true,
+	ua.StatusBadResponseTooLarge:         true,
+	ua.StatusBadDecodingError:            true,
+}
+
+// IsConnectionError reports whether err means the session or transport is no
+// longer usable, as opposed to a problem with one node.
+func IsConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var code ua.StatusCode
+	if errors.As(err, &code) {
+		return !nodeLevelStatus[code]
+	}
+	return true
 }
 
 func readDefinition(ctx context.Context, node *opcua.Node, parentPath string, namespaces []string) (VariableNode, ua.NodeClass, error) {
