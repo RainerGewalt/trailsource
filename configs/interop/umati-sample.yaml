@@ -1,0 +1,46 @@
+# Interop run against the public umati Sample-Server (open62541 based),
+# docs/INTEROP.md. Read-only; limited to 50 variables of the dynamic sample
+# machine (Machinery companion specification layout: Machines folder
+# ns=3;i=1001, machine FullMachineToolDynamic). The NodeIds are those the
+# server reported on 2026-11-03 and may change when the server is rebuilt.
+revision: "1"
+
+producer:
+  id: trailsource-interop-umati
+
+site: interop
+line: public
+device: umati-sample
+
+source:
+  id: interop-public-umati-sample-opcua
+  endpoint: opc.tcp://opcua.umati.app:4840
+  security_policy: ${INTEROP_SECURITY_POLICY}
+  security_mode: ${INTEROP_SECURITY_MODE}
+  certificate_file: ${INTEROP_CERT}
+  private_key_file: ${INTEROP_KEY}
+  auth: anonymous
+  browse_roots:
+    - "ns=14;i=58634"   # FullMachineToolDynamic.Production
+    - "ns=14;i=58643"   # FullMachineToolDynamic.Monitoring
+  max_depth: 6
+  max_nodes: 50
+  subscription_interval_ms: 1000
+  subscription_batch_size: 50
+  rebrowse_interval_s: 60
+  session_backoff_s: 5
+  request_timeout_s: 15
+  browse_timeout_s: 180
+
+mqtt:
+  broker: tcp://127.0.0.1:${INTEROP_MQTT_PORT}
+  client_id: trailsource-interop-umati
+  qos: 1
+  topic_prefix: trailsource/interop/public/umati-sample
+  health_interval_s: 15
+
+state_dir: ${INTEROP_DIR}/state
+
+journal:
+  enabled: true
+  path: ${INTEROP_DIR}/journal/interop-public-umati-sample-opcua.jsonl

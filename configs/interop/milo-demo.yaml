@@ -1,0 +1,48 @@
+# Interop run against the public Eclipse Milo demo server (docs/INTEROP.md).
+# Read-only by design; the browse is limited to 50 variables below two demo
+# folders so the run stays small and polite on a shared public server:
+# Demo.Dynamic (24 changing scalars of every builtin type) and
+# CTT.Static.AllProfiles.Array (24 static arrays).
+# Placeholders (INTEROP_ENDPOINT, INTEROP_SECURITY_POLICY, ...) are set by
+# the person running the test, see docs/INTEROP.md.
+revision: "1"
+
+producer:
+  id: trailsource-interop-milo
+
+site: interop
+line: public
+device: milo-demo
+
+source:
+  id: interop-public-milo-demo-opcua
+  endpoint: ${INTEROP_ENDPOINT}  # opc.tcp://milo.digitalpetri.com:62541/milo, or a local relay
+  security_policy: ${INTEROP_SECURITY_POLICY}
+  security_mode: ${INTEROP_SECURITY_MODE}
+  certificate_file: ${INTEROP_CERT}
+  private_key_file: ${INTEROP_KEY}
+  auth: anonymous
+  browse_roots:
+    - "ns=2;s=Demo.Dynamic"
+    - "ns=2;s=CTT.Static.AllProfiles.Array"
+  max_depth: 4
+  max_nodes: 50
+  subscription_interval_ms: 1000
+  subscription_batch_size: 50
+  rebrowse_interval_s: 60
+  session_backoff_s: 5
+  request_timeout_s: 15
+  browse_timeout_s: 180
+
+mqtt:
+  broker: tcp://127.0.0.1:${INTEROP_MQTT_PORT}
+  client_id: trailsource-interop-milo
+  qos: 1
+  topic_prefix: trailsource/interop/public/milo-demo
+  health_interval_s: 15
+
+state_dir: ${INTEROP_DIR}/state
+
+journal:
+  enabled: true
+  path: ${INTEROP_DIR}/journal/interop-public-milo-demo-opcua.jsonl
