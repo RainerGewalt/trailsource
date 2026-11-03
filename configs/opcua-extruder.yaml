@@ -17,6 +17,12 @@ source:
   endpoint: opc.tcp://opcua-sim:4840/trailsource
   security_policy: None          # lab only; use Basic256Sha256 + SignAndEncrypt against real servers
   security_mode: None
+  # With Sign or SignAndEncrypt: trust list and own certificate in OPC UA
+  # layout (trailsource gen-cert --pki creates it; docs/CONNECT_YOUR_SERVER.md).
+  # Only server certificates in pki/trusted/certs (or chained to a trusted CA
+  # with a current CRL) are used; refused ones land in pki/rejected/.
+  # pki_dir: /etc/trailsource/pki
+  # server_thumbprint: ""        # optional pin (SHA-1) in addition to the trust list
   auth: anonymous                # anonymous | username
   username: "${TRAILSOURCE_OPCUA_USERNAME}"
   password: "${TRAILSOURCE_OPCUA_PASSWORD}"
@@ -25,10 +31,13 @@ source:
   max_depth: 16
   max_nodes: 2500
   subscription_interval_ms: 500
+  # sampling_interval_ms: 500    # default: subscription_interval_ms; 0 = the server's fastest rate
   subscription_batch_size: 50
-  rebrowse_interval_s: 30
+  rebrowse_interval_s: 30        # one subscription per session; a re-browse only adds/removes changed items
   session_backoff_s: 5
   request_timeout_s: 12
+  # browse_timeout_s: 120        # for the whole browse
+  # liveness_interval_s: 10      # read ServerStatus.CurrentTime; detects half-open connections
 
 mqtt:
   broker: tcp://mosquitto:1883   # TrailMQ: ssl://trailmq:8883 with tls.enabled: true

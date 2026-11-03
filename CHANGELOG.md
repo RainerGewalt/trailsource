@@ -10,10 +10,13 @@ marked as preview.
 
 ### Added
 
-- Four scenario demos as make targets (`scenario-inventory-change`,
-  `scenario-gap`, `scenario-restart`, `scenario-tamper`, `scenarios`) that
-  run the simulator, Mosquitto and the adapter as local processes, then
-  verify and report (`scripts/scenario.sh`, `docs/SCENARIOS.md`).
+- Six scenario demos as make targets (`scenario-inventory-change`,
+  `scenario-gap`, `scenario-restart`, `scenario-tamper`,
+  `scenario-server-restart`, `scenario-half-open`, `scenarios`) that run
+  the simulator, Mosquitto and the adapter as local processes, then verify,
+  check the bindings and report (`scripts/scenario.sh`,
+  `docs/SCENARIOS.md`); `make sim-venv` installs the simulator
+  requirements.
 - `trailsource report <journal> [--html out.html] [--json]`: period,
   records per event type, value quality, address-space generations with
   diff, gaps with begin, end, duration and reason, restarts, state at the
@@ -46,8 +49,8 @@ marked as preview.
 - Liveness read of `ServerStatus.CurrentTime` every `liveness_interval_s`:
   a half-open connection ends as `source.connection_lost`.
 - Browse roots in namespace-URI form (`nsu=<uri>;<id>`).
-- Scenarios `server-restart` and `half-open`; every scenario checks that
-  no `entity_key` belongs to two nodes (`scripts/check_bindings.py`).
+- `scripts/check_bindings.py`: fails when an `entity_key` belongs to two
+  nodes or a node to two keys.
 - Interoperability record against the Eclipse Milo demo server and the
   umati Sample-Server (`docs/INTEROP.md`, `configs/interop/`,
   `scripts/tcp_relay.py`).
@@ -70,21 +73,17 @@ marked as preview.
   subscription at every re-browse, as before, sometimes left the new
   subscription silent for seconds against the simulator: data that was
   never recorded.
-- The verifier notice for integer `seq` is `legacy_integer_seq`, the name
-  the reference verifier uses.
-
 - `seq` is written as a canonical decimal string (`"0"`, `"1"`, ...) in Go
   and Python; `testdata/vectors.json` is regenerated. `trailsource verify`
   still accepts journals with integer `seq` and reports them once per
-  stream with the notice `legacy_integer_seq`; `trailsource report` reads both.
-
+  stream with the notice `legacy_integer_seq` (the reference verifier's
+  name; it reports once per record); `trailsource report` reads both.
 - `trailsource verify` reports the finding classes of the Trail Evidence
   Record specification (`hash_mismatch`, `chain_break`, `seq_gap`,
   `schema_invalid`, notice `restart`) and recomputes `chain_hash` with the
   recomputed `content_hash`, like the reference verifier.
 - The browse batches its requests per group of siblings: 101 nodes over the
-  internet in 5 s instead of 65 s, with unchanged traversal and
-  fingerprints.
+  internet in 5 s instead of 65 s.
 - The OPC UA stack no longer reconnects on its own. A lost session is
   recorded, detected within a second, and followed by a new session with a
   fresh browse.

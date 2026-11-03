@@ -200,3 +200,11 @@ the rejection as a 16 s connection gap with reason
 `source.certificate_rejected`. The test was not repeated against umati,
 and no server with a CA-signed certificate or CRL was available; those
 paths are covered by unit tests in `internal/trust`.
+
+After the change to one subscription per session (commit `5713f98`), a
+50 s run against Milo with SignAndEncrypt, the trusted certificate from
+above and re-browses every 15 s kept subscription 12854 across both
+re-browses (no items added or removed), recorded 1,107 records with string
+`seq`, and verified with TrailSource and with the local working state of
+the trail-evidence reference verifier; `scripts/check_bindings.py` found
+48 keys for 48 nodes.
