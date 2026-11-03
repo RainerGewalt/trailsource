@@ -208,10 +208,11 @@ journal or state files. Adjust until the list is the data you want:
   its requests (one Browse and one Read per group of siblings); against a
   public server over the internet, 3213 nodes took 38 seconds.
 - `rebrowse_interval_s` (default 30): how often the adapter browses again
-  to detect address-space changes. Every re-browse also recreates the
-  subscription, so the server sends the current value of every node once
-  more. On large servers 300 seconds or more is reasonable. A monitored
-  node that the server deletes triggers a re-browse on its own.
+  to detect address-space changes. The subscription stays; only monitored
+  items of nodes that appeared or disappeared are added or deleted, and
+  values keep flowing during the browse. On large servers 300 seconds or
+  more is reasonable. A monitored node that the server deletes triggers a
+  re-browse on its own.
 - `sampling_interval_ms` (default: `subscription_interval_ms`): how often
   the server samples each node. `0` asks for the server's fastest rate,
   which on some servers means ten values per node and second.

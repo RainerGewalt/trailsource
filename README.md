@@ -254,7 +254,7 @@ testdata/              canonicalisation vectors, report fixture
 
 ## Documentation
 
-- `docs/SCENARIOS.md`: the four scenarios, locally and in the container stack.
+- `docs/SCENARIOS.md`: the six scenarios, locally and in the container stack.
 - `docs/CONNECT_YOUR_SERVER.md`: from endpoint to verified journal on your server.
 - `docs/STATUS.md`: reason codes and the state of a source.
 - `docs/INTEROP.md`: runs against servers of other implementations, what worked and what did not.

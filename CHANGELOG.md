@@ -64,11 +64,19 @@ marked as preview.
   the content of a truncated inventory do not depend on the server's
   reference order; colliding keys get an order-independent suffix.
 - `gen-cert --out` is now `gen-cert --pki`.
+- One subscription per session. A re-browse runs in the background while
+  notifications are processed, then adds and deletes only the monitored
+  items that changed; unchanged nodes are not sent again. Replacing the
+  subscription at every re-browse, as before, sometimes left the new
+  subscription silent for seconds against the simulator: data that was
+  never recorded.
+- The verifier notice for integer `seq` is `legacy_integer_seq`, the name
+  the reference verifier uses.
 
 - `seq` is written as a canonical decimal string (`"0"`, `"1"`, ...) in Go
   and Python; `testdata/vectors.json` is regenerated. `trailsource verify`
   still accepts journals with integer `seq` and reports them once per
-  stream with the notice `seq_integer`; `trailsource report` reads both.
+  stream with the notice `legacy_integer_seq`; `trailsource report` reads both.
 
 - `trailsource verify` reports the finding classes of the Trail Evidence
   Record specification (`hash_mismatch`, `chain_break`, `seq_gap`,

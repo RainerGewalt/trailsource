@@ -8,7 +8,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 
 .PHONY: help build test py-test fmt vet ci compose-config demo demo-down logs verify clean \
 	scenarios scenario-inventory-change scenario-gap scenario-restart scenario-tamper \
-	scenario-server-restart scenario-half-open
+	scenario-server-restart scenario-half-open sim-venv
 
 help:
 	@printf '%s\n' 'TrailSource:' \
@@ -21,6 +21,7 @@ help:
 	  '  make logs            follow demo logs' \
 	  '' \
 	  'Scenarios (local processes, no Docker; need mosquitto and Python with asyncua):' \
+	  '  make sim-venv                    install the simulator requirements into .demo/sim-venv' \
 	  '  make scenario-inventory-change   a node appears at runtime: source.node_added with diff' \
 	  '  make scenario-gap                the server goes away and comes back: a gap with duration' \
 	  '  make scenario-restart            the adapter restarts: chain_restart with anchor, a notice' \
@@ -72,6 +73,13 @@ verify: build
 
 scenario-inventory-change scenario-gap scenario-restart scenario-tamper scenario-server-restart scenario-half-open: scenario-%: build
 	scripts/scenario.sh $*
+
+# Newest python3.x on PATH for the simulator venv (asyncua needs 3.8 or newer).
+SIM_VENV_PYTHON ?= $(shell for p in python3.13 python3.12 python3.11 python3.10 python3.9 python3.8 python3; do command -v $$p >/dev/null && { echo $$p; break; }; done)
+
+sim-venv:
+	$(SIM_VENV_PYTHON) -m venv .demo/sim-venv
+	.demo/sim-venv/bin/pip install -q -r sim/opcua/requirements.txt
 
 scenarios: scenario-inventory-change scenario-gap scenario-restart scenario-tamper scenario-server-restart scenario-half-open
 

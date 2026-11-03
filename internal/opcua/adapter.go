@@ -58,9 +58,8 @@ type Adapter struct {
 	lastError      string
 	recordsEmitted uint64
 	contextValues  map[string]any // latest values of mapping rules flagged context: true
-	nodesByHandle  map[uint32]*boundNode
-	lastEvent      string // reason code of the latest lifecycle record (docs/STATUS.md)
-	lastSeen       string // when the source last answered: value, browse or connect
+	lastEvent      string         // reason code of the latest lifecycle record (docs/STATUS.md)
+	lastSeen       string         // when the source last answered: value, browse or connect
 
 	// Owned by the Run goroutine.
 	everConnected bool      // a session was established in this process
@@ -251,18 +250,29 @@ func (a *Adapter) session(ctx context.Context) (connected bool, err error) {
 		_ = client.Close(closeCtx)
 	}()
 
-	for {
-		if ctx.Err() != nil {
-			return true, nil
-		}
-		nodes, err := a.browseAndReconcile(ctx, client, sessionInfo)
-		if err != nil {
-			return true, err
-		}
-		if err := a.subscribeUntilRebrowse(ctx, client, nodes); err != nil {
-			return true, err
-		}
+	nodes, err := a.browseAndReconcile(ctx, client, sessionInfo)
+	if err != nil {
+		return true, err
 	}
+	// One subscription for the whole session. A re-browse changes only the
+	// monitored items that differ: creating a new subscription each time
+	// left some servers' publish cycle silent for a whole interval and sent
+	// every value again.
+	mon, err := newMonitor(ctx, client, a.cfg.SubscriptionInterval())
+	if err != nil {
+		return true, fmt.Errorf("create subscription: %w", err)
+	}
+	dead := false
+	defer func() {
+		if !dead { // on a dead connection cancelling only waits for a timeout
+			mon.cancel()
+		}
+	}()
+	if err := a.syncMonitor(ctx, mon, nodes); err != nil {
+		return true, err
+	}
+	dead, err = a.watch(ctx, client, sessionInfo, mon)
+	return true, err
 }
 
 // configuredSession describes the session the adapter would open; used for
@@ -512,69 +522,27 @@ func (a *Adapter) setInventory(fp string, gen uint64) {
 	a.mu.Unlock()
 }
 
-func (a *Adapter) subscribeUntilRebrowse(ctx context.Context, client *opcua.Client, nodes []VariableNode) error {
-	notifyCh := make(chan *opcua.PublishNotificationData, 1024)
-	sub, err := client.Subscribe(ctx, &opcua.SubscriptionParameters{Interval: a.cfg.SubscriptionInterval()}, notifyCh)
-	if err != nil {
-		return fmt.Errorf("create subscription: %w", err)
+// watch handles notifications until the session ends. It re-browses every
+// rebrowse_interval_s (sooner after a deleted node) in a goroutine, so
+// notifications keep flowing during a long browse, and then adjusts the
+// monitored items. dead reports that the connection is gone.
+func (a *Adapter) watch(ctx context.Context, client *opcua.Client, info sessionInfo, mon *monitor) (dead bool, err error) {
+	type browseResult struct {
+		nodes []VariableNode
+		err   error
 	}
-	// dead is set when the connection is known to be gone; cancelling the
-	// subscription would then only wait for a timeout and delay the record
-	// of the loss.
-	dead := false
+	browseCtx, cancelBrowse := context.WithCancel(ctx)
+	var browsing chan browseResult // non-nil while a browse runs
 	defer func() {
-		if dead {
-			return
+		cancelBrowse()
+		if browsing != nil {
+			<-browsing // never leave a browse running past the session
 		}
-		cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = sub.Cancel(cancelCtx)
 	}()
-
-	byHandle := map[uint32]*boundNode{}
-	revised := map[float64]int{} // revised sampling interval (ms) -> monitored items
-	var handle uint32 = 1
-	batch := a.cfg.Source.SubscriptionBatchSize
-	for start := 0; start < len(nodes); start += batch {
-		end := start + batch
-		if end > len(nodes) {
-			end = len(nodes)
-		}
-		requests := make([]*ua.MonitoredItemCreateRequest, 0, end-start)
-		handles := make([]uint32, 0, end-start)
-		for _, n := range nodes[start:end] {
-			h := handle
-			handle++
-			req := opcua.NewMonitoredItemCreateRequestWithDefaults(n.NodeID, ua.AttributeIDValue, h)
-			req.RequestedParameters.SamplingInterval = float64(a.cfg.SamplingInterval().Milliseconds())
-			requests = append(requests, req)
-			handles = append(handles, h)
-			byHandle[h] = &boundNode{node: n, res: a.mapping.Resolve(n.Item.BrowsePath, n.Item.BrowseName)}
-		}
-		res, err := sub.Monitor(ctx, ua.TimestampsToReturnBoth, requests...)
-		if err != nil {
-			return fmt.Errorf("monitor batch %d-%d: %w", start, end, err)
-		}
-		for i, r := range res.Results {
-			if r.StatusCode == ua.StatusOK {
-				revised[r.RevisedSamplingInterval]++
-			}
-			if i < len(handles) && r.StatusCode != ua.StatusOK {
-				n := byHandle[handles[i]]
-				log.Printf("monitor rejected path=%s node=%s status=%s", n.node.Item.BrowsePath, n.node.Item.NodeID, r.StatusCode)
-				delete(byHandle, handles[i])
-			}
-		}
-	}
-	a.mu.Lock()
-	a.nodesByHandle = byHandle
-	a.mu.Unlock()
-	log.Printf("subscribed monitored_items=%d subscription_id=%d interval=%s sampling_requested=%s sampling_revised_ms=%v",
-		len(byHandle), sub.SubscriptionID, a.cfg.SubscriptionInterval(), a.cfg.SamplingInterval(), revised)
 
 	rebrowse := time.NewTimer(a.cfg.RebrowseInterval())
 	defer rebrowse.Stop()
-	subscribedAt := time.Now()
+	lastBrowse := time.Now()
 	rebrowseSoon := false
 	// A dead server does not always close the notification channel; the
 	// client state does change, so it is polled once per second. A
@@ -589,48 +557,65 @@ func (a *Adapter) subscribeUntilRebrowse(ctx context.Context, client *opcua.Clie
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return false, nil
 		case <-rebrowse.C:
-			return nil
+			if browsing == nil {
+				ch := make(chan browseResult, 1)
+				browsing = ch
+				go func() {
+					nodes, err := a.browseAndReconcile(browseCtx, client, info)
+					ch <- browseResult{nodes, err}
+				}()
+			}
+		case r := <-browsing:
+			browsing = nil
+			if r.err != nil {
+				return client.State() != opcua.Connected, r.err
+			}
+			if err := a.syncMonitor(ctx, mon, r.nodes); err != nil {
+				return IsConnectionError(err), err
+			}
+			lastBrowse, rebrowseSoon = time.Now(), false
+			rebrowse.Reset(a.cfg.RebrowseInterval())
 		case <-stateCheck.C:
 			if st := client.State(); st != opcua.Connected {
-				dead = true
-				return fmt.Errorf("opc connection state %s", st)
+				return true, fmt.Errorf("opc connection state %s", st)
 			}
 		case <-liveness.C:
 			if err := a.checkLiveness(ctx, client); err != nil {
-				dead = true
-				return err
+				return true, err
 			}
-		case n, open := <-notifyCh:
+		case n, open := <-mon.notifyCh:
 			if !open {
-				return errors.New("opc notification channel closed")
+				return false, errors.New("opc notification channel closed")
 			}
 			if n == nil {
 				continue
 			}
 			if n.Error != nil {
-				return fmt.Errorf("opc notification: %w", n.Error)
+				return false, fmt.Errorf("opc notification: %w", n.Error)
 			}
-			if dcn, isDCN := n.Value.(*ua.DataChangeNotification); isDCN {
-				readAt := time.Now()
-				a.seen(readAt)
-				for _, item := range dcn.MonitoredItems {
-					bn, known := byHandle[item.ClientHandle]
-					if !known {
-						continue
-					}
-					a.handleValue(bn, item.Value, readAt)
-					if !rebrowseSoon && item.Value != nil && NodeGone(item.Value.Status) {
-						// The server deleted a node we monitor: the address
-						// space changed, so browse again instead of waiting
-						// for the interval, at most once per minRebrowse.
-						rebrowseSoon = true
-						delay := max(minRebrowse-time.Since(subscribedAt), 0)
-						log.Printf("monitored node %s reports %s: address space changed on the server, re-browsing in %s",
-							bn.node.Item.NodeID, StatusName(item.Value.Status), delay.Round(time.Millisecond))
-						rebrowse.Reset(delay)
-					}
+			dcn, isDCN := n.Value.(*ua.DataChangeNotification)
+			if !isDCN {
+				continue
+			}
+			readAt := time.Now()
+			a.seen(readAt)
+			for _, item := range dcn.MonitoredItems {
+				bn, known := mon.byHandle[item.ClientHandle]
+				if !known {
+					continue // removed by the last re-browse
+				}
+				a.handleValue(bn, item.Value, readAt)
+				if !rebrowseSoon && browsing == nil && item.Value != nil && NodeGone(item.Value.Status) {
+					// The server deleted a node we monitor: the address
+					// space changed, so browse again instead of waiting
+					// for the interval, at most once per minRebrowse.
+					rebrowseSoon = true
+					delay := max(minRebrowse-time.Since(lastBrowse), 0)
+					log.Printf("monitored node %s reports %s: address space changed on the server, re-browsing in %s",
+						bn.node.Item.NodeID, StatusName(item.Value.Status), delay.Round(time.Millisecond))
+					rebrowse.Reset(delay)
 				}
 			}
 		}

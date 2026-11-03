@@ -6,7 +6,8 @@
 #                       server-restart | half-open
 #
 # Needs: ./bin/trailsource (make build), mosquitto on PATH, a Python with
-# asyncua for the simulator (pip install -r sim/opcua/requirements.txt).
+# asyncua for the simulator: make sim-venv installs sim/opcua/requirements.txt
+# into .demo/sim-venv, which is used when present.
 # Everything is written below .demo/scenarios/<name>/, which is git-ignored.
 #
 # Environment:
@@ -49,13 +50,13 @@ if [ "${SCENARIO_BROKER:-}" != "external" ]; then
   command -v mosquitto >/dev/null || die "mosquitto not found; install it or run a broker on port $SCENARIO_MQTT_PORT and set SCENARIO_BROKER=external (docs/SCENARIOS.md)"
 fi
 if [ -z "${SIM_PYTHON:-}" ]; then
-  for candidate in python3 /usr/bin/python3 python; do
+  for candidate in "$ROOT/.demo/sim-venv/bin/python" python3 /usr/bin/python3 python; do
     if command -v "$candidate" >/dev/null && "$candidate" -c 'import asyncua' >/dev/null 2>&1; then
       SIM_PYTHON=$candidate; break
     fi
   done
 fi
-[ -n "${SIM_PYTHON:-}" ] || die "no Python with asyncua found; pip install -r sim/opcua/requirements.txt or set SIM_PYTHON"
+[ -n "${SIM_PYTHON:-}" ] || die "no Python with asyncua found; run make sim-venv (or pip install -r sim/opcua/requirements.txt) or set SIM_PYTHON"
 port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 if [ "${SCENARIO_BROKER:-}" != "external" ] && port_busy "$SCENARIO_MQTT_PORT"; then die "port $SCENARIO_MQTT_PORT is in use (set SCENARIO_MQTT_PORT)"; fi
 for p in "$SCENARIO_OPC_PORT" "$SIM_PORT"; do

@@ -113,10 +113,12 @@ is marked `truncated`.
   or removed early in depth-first order moves the window: run C's
   generation 2 lists 8 nodes as added that existed all along. The record
   says `truncated: true`; the reader has to take that into account.
-- **Re-browse resends values.** Every re-browse recreates the subscription,
-  so the server sends every node's current value again (run C: four
-  records per unchanging node in 150 s, one per subscription: at start and
-  after each of three re-browses). Correct, but noisy.
+- **Re-browse resends values.** Every re-browse recreated the
+  subscription, so the server sent every node's current value again (run
+  C: four records per unchanging node in 150 s, one per subscription: at
+  start and after each of three re-browses). Fixed since: one subscription
+  per session, a re-browse only adds and deletes the monitored items that
+  changed.
 - **Not tested.** Username tokens (both servers were used anonymously),
   policies other than Basic256Sha256, a server restart, a half-open
   connection (network silently dropping packets instead of closing the

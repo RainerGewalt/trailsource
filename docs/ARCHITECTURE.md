@@ -73,16 +73,22 @@ connect ──> browse ──> reconcile ──> subscribe ──(rebrowse timer
 - `reconcile`: fingerprint the items, load the persisted snapshot, diff,
   emit `source.inventory.changed` when different, save the new snapshot with
   an incremented generation.
-- `subscribe`: one subscription, monitored items in batches, both
-  timestamps requested, sampling interval from `sampling_interval_ms`
+- `subscribe`: one subscription per session, monitored items in batches,
+  both timestamps requested, sampling interval from `sampling_interval_ms`
   (default: the publishing interval). Each data change becomes a sealed
   record. The initial value of every monitored item arrives through the
   same path, so there is no separate initial read.
 - `rebrowse`: after the configured interval, or at most 5 s after a
-  monitored node reports `BadNodeIdUnknown`, the subscription is
-  cancelled, the address space is browsed again and reconciled, and a new
-  subscription is created. A changed address space therefore shows up
-  within one interval even without a reconnect.
+  monitored node reports `BadNodeIdUnknown`, the address space is browsed
+  again in the background and reconciled while notifications keep being
+  processed. Then the monitored items are adjusted: items of nodes that
+  are gone are deleted, new nodes are added, the others keep their item and
+  get the current path, `entity_key` and mapping. A changed address space
+  therefore shows up within one interval even without a reconnect, and
+  unchanged nodes are not sent again. (Up to this change each re-browse
+  replaced the subscription; against the simulator a replacement
+  subscription sometimes stayed silent for seconds, and every node's value
+  was sent again.)
 - `loss`: the client state is polled once per second. The stack's own
   reconnect is switched off: a lost session ends with
   `source.connection_lost` and its reason, and the next session starts
