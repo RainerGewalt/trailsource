@@ -1,0 +1,36 @@
+TrailSource report
+Journal  testdata/report/journal.jsonl
+Verify   OK: 13 records in 1 stream(s), 0 error(s), 2 notice(s)
+
+Stream plant-a-ext-01-extruder-01-opcua
+  Producer  trailsource-opcua-extruder-01
+  Endpoint  opc.tcp://127.0.0.1:48400/trailsource
+  Period    2026-11-02T10:00:00.000Z .. 2026-11-02T10:00:51.000Z (51s)
+  At end    source.connection.established, last seen 2026-11-02T10:00:51.000Z
+  Records   13
+    source.value.observed             6
+    source.connection.changed         5
+    source.inventory.changed          2
+  Values    4 nodes; quality good 5, uncertain 0, bad 1; without source timestamp 1
+
+  Address space generations (2)
+    gen 1   seq 1      2026-11-02T10:00:00.200Z  source.inventory.initial   3 nodes  sha256:1f36df49fb12...
+    gen 2   seq 8      2026-11-02T10:00:30.000Z  source.inventory.added     4 nodes  sha256:c89296cdecdb...
+            added 1, removed 0, changed 0
+            + Plant.Line01.Extruder01.BarrelZone07.TempActualC (float64)
+
+  Gaps (2)
+    connection 2026-11-02T10:00:10.000Z .. 2026-11-02T10:00:25.000Z  15s
+               source.connection.lost opc connection state Disconnected
+               last value before the gap: 2026-11-02T10:00:09.500Z
+    adapter    2026-11-02T10:00:40.000Z .. 2026-11-02T10:00:50.000Z  10s
+               source.connection.closed adapter stopping
+               last value before the gap: 2026-11-02T10:00:31.000Z
+
+  Restarts (2)
+    seq 0      2026-11-02T10:00:00.000Z  anchor genesis
+    seq 11     2026-11-02T10:00:50.000Z  anchor sha256:39ac327a540a..., 10s after the previous record
+
+Findings (2)
+  notice restart        line 1      seq 0      restart at seq 0, anchor sha256:0000000000000000000000000000000000000000000000000000000000000000 (previous segment not in this journal)
+  notice restart        line 12     seq 11     restart at seq 11, anchor sha256:39ac327a540aeb93538b48d41297cbd2ac1049a7a19940b6137547e65841287b
