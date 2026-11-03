@@ -2,6 +2,7 @@ package opcua
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/gopcua/opcua/ua"
 
+	"github.com/RainerGewalt/trailsource/internal/config"
 	"github.com/RainerGewalt/trailsource/internal/inventory"
 )
 
@@ -360,5 +362,21 @@ func TestResolveNodeIDWithNamespaceURI(t *testing.T) {
 	}
 	if _, err := ResolveNodeID("nsu=urn:missing;s=X", ns); err == nil {
 		t.Error("unknown namespace URI must fail")
+	}
+}
+
+// Records carry the session's auth kind, never the user name or password.
+func TestSessionInfoCarriesNoCredentials(t *testing.T) {
+	cfg, err := config.Parse([]byte("site: s\nline: l\ndevice: d\nsource:\n  endpoint: opc.tcp://h:4840\n  auth: username\n  username: plant-reader\n  password: very-secret\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &Adapter{cfg: cfg}
+	raw, _ := json.Marshal(a.configuredSession())
+	if strings.Contains(string(raw), "plant-reader") || strings.Contains(string(raw), "very-secret") {
+		t.Fatalf("session info leaks credentials: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"auth":"username"`) {
+		t.Fatalf("auth kind missing: %s", raw)
 	}
 }
