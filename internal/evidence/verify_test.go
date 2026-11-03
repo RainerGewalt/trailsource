@@ -220,7 +220,7 @@ func TestVerifyAcceptsIntegerSeqWithNotice(t *testing.T) {
 	}
 	notices := 0
 	for _, i := range rep.Issues {
-		if i.Kind == IssueSeqInteger {
+		if i.Kind == IssueLegacyIntegerSeq {
 			notices++
 		}
 	}

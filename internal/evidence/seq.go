@@ -13,7 +13,7 @@ import (
 //
 // Journals written before this rule carry seq as a JSON integer.
 // UnmarshalJSON and ParseSeq accept that form too, and the verifier reports
-// it as the notice seq_integer.
+// it as the notice legacy_integer_seq.
 type Seq uint64
 
 // String returns the canonical decimal form.

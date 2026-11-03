@@ -17,12 +17,12 @@ import (
 type IssueKind string
 
 const (
-	IssueRestart       IssueKind = "restart"        // notice: chain_restart record, anchor consistent
-	IssueSeqInteger    IssueKind = "seq_integer"    // notice: seq written as a JSON integer (journal from before the string rule)
-	IssueSeqGap        IssueKind = "seq_gap"        // seq is not previous + 1 without chain_restart
-	IssueHashMismatch  IssueKind = "hash_mismatch"  // recomputed content_hash or chain_hash differs
-	IssueChainBreak    IssueKind = "chain_break"    // prev_hash or restart anchor does not link to the previous record
-	IssueSchemaInvalid IssueKind = "schema_invalid" // unknown schema, malformed or unparsable record
+	IssueRestart          IssueKind = "restart"            // notice: chain_restart record, anchor consistent
+	IssueLegacyIntegerSeq IssueKind = "legacy_integer_seq" // notice: seq written as a JSON integer (accepted during 0.x, as in the reference verifier)
+	IssueSeqGap           IssueKind = "seq_gap"            // seq is not previous + 1 without chain_restart
+	IssueHashMismatch     IssueKind = "hash_mismatch"      // recomputed content_hash or chain_hash differs
+	IssueChainBreak       IssueKind = "chain_break"        // prev_hash or restart anchor does not link to the previous record
+	IssueSchemaInvalid    IssueKind = "schema_invalid"     // unknown schema, malformed or unparsable record
 )
 
 // Issue is one verification finding.
@@ -35,9 +35,9 @@ type Issue struct {
 }
 
 // IsBreak reports whether the issue is an integrity failure (as opposed to a
-// notice: restart, seq_integer).
+// notice: restart, legacy_integer_seq).
 func (i Issue) IsBreak() bool {
-	return i.Kind != IssueRestart && i.Kind != IssueSeqInteger
+	return i.Kind != IssueRestart && i.Kind != IssueLegacyIntegerSeq
 }
 
 // StreamReport summarises one stream.
@@ -142,7 +142,7 @@ func verifyStream(sid string, recs []parsed, issues *[]Issue) StreamReport {
 	add := func(kind IssueKind, p parsed, seq int64, detail string) {
 		*issues = append(*issues, Issue{Kind: kind, StreamID: sid, Line: p.line, Seq: seq, Detail: detail})
 		switch kind {
-		case IssueSeqInteger:
+		case IssueLegacyIntegerSeq:
 		case IssueRestart:
 			sr.Restarts++
 		case IssueSeqGap:
@@ -246,7 +246,7 @@ func verifyStream(sid string, recs []parsed, issues *[]Issue) StreamReport {
 		first = false
 	}
 	if integerSeqs > 0 {
-		add(IssueSeqInteger, firstInteger, seqOf(firstInteger.m), fmt.Sprintf(
+		add(IssueLegacyIntegerSeq, firstInteger, seqOf(firstInteger.m), fmt.Sprintf(
 			"%d record(s) write seq as a JSON integer, the form of journals written before seq became a decimal string; accepted, hashes are checked as written", integerSeqs))
 	}
 	sr.LastChain = prevHash
