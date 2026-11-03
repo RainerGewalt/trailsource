@@ -21,11 +21,27 @@ import (
 //     so 0.1f encodes as 0.1 and not 0.10000000149011612.
 //   - Int64 and UInt64 are encoded as decimal strings because values beyond
 //     2^53 would be rounded by canonicalisation.
-//   - DateTime becomes an RFC 3339 string, ByteString base64.
+//   - DateTime becomes an RFC 3339 string, ByteString base64, Guid, NodeId,
+//     ExpandedNodeId and XmlElement their string forms.
+//   - Variant is unwrapped (value_type "variant<inner>"), DataValue becomes
+//     {value, value_type, status_code, source_timestamp, server_timestamp},
+//     ExtensionObject becomes {type_id, body} with a decoded body walked
+//     field by field under the same rules, or {type_id, body_base64} when the
+//     stack could not decode it.
 //
 // The second result names the native OPC UA type so a consumer can restore
 // the original representation.
 func EncodeValue(v any) (any, string) {
+	return encodeValue(v, 0)
+}
+
+// maxNesting bounds the walk into nested structures and arrays.
+const maxNesting = 8
+
+func encodeValue(v any, depth int) (any, string) {
+	if depth > maxNesting {
+		return fmt.Sprintf("%v", v), "truncated"
+	}
 	switch t := v.(type) {
 	case nil:
 		return nil, "null"
@@ -61,11 +77,30 @@ func EncodeValue(v any) (any, string) {
 		return t.UTC().Format(time.RFC3339Nano), "datetime"
 	case []byte:
 		return base64.StdEncoding.EncodeToString(t), "bytestring"
+	case ua.XMLElement:
+		return string(t), "xmlelement"
+	case *ua.GUID:
+		if t == nil {
+			return nil, "guid"
+		}
+		return t.String(), "guid"
 	case *ua.NodeID:
 		if t == nil {
 			return nil, "nodeid"
 		}
 		return t.String(), "nodeid"
+	case *ua.ExpandedNodeID:
+		if t == nil || t.NodeID == nil {
+			return nil, "expandednodeid"
+		}
+		s := t.NodeID.String()
+		if t.NamespaceURI != "" {
+			s = "nsu=" + t.NamespaceURI + ";" + s
+		}
+		if t.ServerIndex != 0 {
+			s = "svr=" + strconv.FormatUint(uint64(t.ServerIndex), 10) + ";" + s
+		}
+		return s, "expandednodeid"
 	case *ua.LocalizedText:
 		if t == nil {
 			return nil, "localizedtext"
@@ -75,22 +110,112 @@ func EncodeValue(v any) (any, string) {
 		if t == nil {
 			return nil, "qualifiedname"
 		}
+		if t.NamespaceIndex != 0 {
+			return strconv.FormatUint(uint64(t.NamespaceIndex), 10) + ":" + t.Name, "qualifiedname"
+		}
 		return t.Name, "qualifiedname"
 	case ua.StatusCode:
 		return fmt.Sprintf("0x%08X", uint32(t)), "statuscode"
+	case *ua.Variant:
+		if t == nil {
+			return nil, "variant<null>"
+		}
+		inner, typ := encodeValue(t.Value(), depth+1)
+		return inner, "variant<" + typ + ">"
+	case *ua.DataValue:
+		if t == nil {
+			return nil, "datavalue"
+		}
+		out := map[string]any{"status_code": fmt.Sprintf("0x%08X", uint32(t.Status)), "source_timestamp": nil, "server_timestamp": nil}
+		var inner any
+		typ := "null"
+		if t.Value != nil {
+			inner, typ = encodeValue(t.Value.Value(), depth+1)
+		}
+		out["value"], out["value_type"] = inner, typ
+		if !t.SourceTimestamp.IsZero() {
+			out["source_timestamp"] = t.SourceTimestamp.UTC().Format(time.RFC3339Nano)
+		}
+		if !t.ServerTimestamp.IsZero() {
+			out["server_timestamp"] = t.ServerTimestamp.UTC().Format(time.RFC3339Nano)
+		}
+		return out, "datavalue"
 	case *ua.ExtensionObject:
-		return fmt.Sprintf("%v", t), "extensionobject"
+		if t == nil {
+			return nil, "extensionobject"
+		}
+		out := map[string]any{"type_id": nil}
+		if t.TypeID != nil && t.TypeID.NodeID != nil {
+			out["type_id"] = t.TypeID.NodeID.String()
+		}
+		switch body := t.Value.(type) {
+		case nil:
+			out["body"] = nil
+		case []byte:
+			out["body_base64"] = base64.StdEncoding.EncodeToString(body)
+		default:
+			out["body"], _ = encodeValue(body, depth+1)
+		}
+		return out, "extensionobject"
 	}
-	rv := reflect.ValueOf(v)
-	if rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array {
+	return encodeReflect(reflect.ValueOf(v), depth)
+}
+
+// encodeReflect handles arrays, matrices, decoded structures and named
+// scalar types (enumerations) that the type switch does not list.
+func encodeReflect(rv reflect.Value, depth int) (any, string) {
+	switch rv.Kind() {
+	case reflect.Slice, reflect.Array:
 		out := make([]any, rv.Len())
-		elemType := "unknown"
+		elemType := typeName(rv.Type().Elem())
 		for i := 0; i < rv.Len(); i++ {
-			out[i], elemType = EncodeValue(rv.Index(i).Interface())
+			out[i], elemType = encodeValue(rv.Index(i).Interface(), depth+1)
 		}
 		return out, "array<" + elemType + ">"
+	case reflect.Ptr, reflect.Interface:
+		if rv.IsNil() {
+			return nil, "null"
+		}
+		return encodeValue(rv.Elem().Interface(), depth+1)
+	case reflect.Struct:
+		out := map[string]any{}
+		rt := rv.Type()
+		for i := 0; i < rt.NumField(); i++ {
+			f := rt.Field(i)
+			if !f.IsExported() {
+				continue
+			}
+			out[f.Name], _ = encodeValue(rv.Field(i).Interface(), depth+1)
+		}
+		return out, "struct:" + rt.String()
+	case reflect.Bool:
+		return rv.Bool(), "bool:" + rv.Type().String()
+	case reflect.Int8, reflect.Int16, reflect.Int32:
+		return rv.Int(), "enum:" + rv.Type().String()
+	case reflect.Int, reflect.Int64:
+		return strconv.FormatInt(rv.Int(), 10), rv.Type().String()
+	case reflect.Uint8, reflect.Uint16, reflect.Uint32:
+		return rv.Uint(), "enum:" + rv.Type().String()
+	case reflect.Uint, reflect.Uint64:
+		return strconv.FormatUint(rv.Uint(), 10), rv.Type().String()
+	case reflect.Float32:
+		return widenFloat32(float32(rv.Float())), rv.Type().String()
+	case reflect.Float64:
+		return finiteFloat(rv.Float()), rv.Type().String()
+	case reflect.String:
+		return rv.String(), "string:" + rv.Type().String()
 	}
-	return fmt.Sprintf("%v", v), "unknown:" + reflect.TypeOf(v).String()
+	return fmt.Sprintf("%v", rv.Interface()), "unknown:" + rv.Type().String()
+}
+
+func typeName(t reflect.Type) string {
+	switch t.Kind() {
+	case reflect.Uint8:
+		return "uint8"
+	case reflect.Ptr:
+		return typeName(t.Elem())
+	}
+	return t.String()
 }
 
 // finiteFloat returns f, or nil for NaN and infinities which JSON cannot carry.

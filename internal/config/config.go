@@ -57,6 +57,7 @@ type Config struct {
 		MaxDepth               int      `yaml:"max_depth"`
 		MaxNodes               int      `yaml:"max_nodes"`
 		SubscriptionIntervalMS int      `yaml:"subscription_interval_ms"`
+		SamplingIntervalMS     *int     `yaml:"sampling_interval_ms"` // default: subscription_interval_ms; 0 = the server's fastest rate
 		SubscriptionBatchSize  int      `yaml:"subscription_batch_size"`
 		RebrowseIntervalS      int      `yaml:"rebrowse_interval_s"`
 		SessionBackoffS        int      `yaml:"session_backoff_s"`
@@ -236,6 +237,10 @@ func (c *Config) applyDefaults() {
 	if c.Source.SubscriptionIntervalMS <= 0 {
 		c.Source.SubscriptionIntervalMS = 500
 	}
+	if c.Source.SamplingIntervalMS == nil || *c.Source.SamplingIntervalMS < 0 {
+		v := c.Source.SubscriptionIntervalMS
+		c.Source.SamplingIntervalMS = &v
+	}
 	if c.Source.SubscriptionBatchSize <= 0 {
 		c.Source.SubscriptionBatchSize = 50
 	}
@@ -328,6 +333,9 @@ func tok(s string) string {
 // Durations derived from the integer settings.
 func (c *Config) SubscriptionInterval() time.Duration {
 	return time.Duration(c.Source.SubscriptionIntervalMS) * time.Millisecond
+}
+func (c *Config) SamplingInterval() time.Duration {
+	return time.Duration(*c.Source.SamplingIntervalMS) * time.Millisecond
 }
 func (c *Config) RebrowseInterval() time.Duration {
 	return time.Duration(c.Source.RebrowseIntervalS) * time.Second

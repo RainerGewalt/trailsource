@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 const sample = `
@@ -70,5 +71,23 @@ func TestValidate(t *testing.T) {
 	}
 	if _, err := Parse([]byte("site: a\nsource:\n  endpoint: opc.tcp://x\n")); err == nil {
 		t.Fatal("missing line/device accepted")
+	}
+}
+
+func TestSamplingIntervalDefaultsToSubscriptionInterval(t *testing.T) {
+	base := "site: s\nline: l\ndevice: d\nsource:\n  endpoint: opc.tcp://h:4840\n  subscription_interval_ms: 750\n"
+	cfg, err := Parse([]byte(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SamplingInterval() != 750*time.Millisecond {
+		t.Fatalf("default sampling interval %s", cfg.SamplingInterval())
+	}
+	cfg, err = Parse([]byte(base + "  sampling_interval_ms: 0\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SamplingInterval() != 0 {
+		t.Fatalf("explicit 0 (server's fastest rate) must be kept, got %s", cfg.SamplingInterval())
 	}
 }

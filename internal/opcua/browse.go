@@ -27,8 +27,10 @@ type BrowseResult struct {
 	// Truncated is true when max_nodes stopped the walk. The inventory is
 	// then a deterministic prefix of the address space, not all of it.
 	Truncated bool
-	// Visited counts every node read, objects and variables.
+	// Visited counts every node entered, objects and variables.
 	Visited int
+	// Requests counts Browse, BrowseNext and Read service calls.
+	Requests int
 }
 
 // BrowseVariables walks the address space from each root along HasComponent,
@@ -36,21 +38,88 @@ type BrowseResult struct {
 // by browse path. The browse path is the dot-joined chain of BrowseNames
 // below the root (namespace prefixes stripped).
 //
+// The walk is depth-first. A node at depth d is entered when d <= maxDepth;
+// a node reachable on several paths keeps the path it was first entered on;
+// the walk stops when maxNodes variables were collected. Requests are
+// batched: the children of all siblings are browsed in one Browse call and
+// the attributes of all sibling variables are read in one Read call, so the
+// number of round trips grows with the number of parents, not of nodes.
+//
 // A browse never produces a partial inventory by accident: an unreadable root
 // or any transport or session error aborts it with an error, so a dying
 // connection cannot be mistaken for an address space that lost its nodes.
 // Errors that concern a single node (unknown node, access denied) skip that
 // node only.
 func BrowseVariables(ctx context.Context, client *opcua.Client, roots []*ua.NodeID, maxDepth, maxNodes int, namespaces []string) (BrowseResult, error) {
+	return browseTree(ctx, &sessionSpace{client: client}, roots, maxDepth, maxNodes, namespaces)
+}
+
+// nodeRef is a node as a parent's Browse result describes it.
+type nodeRef struct {
+	ID    *ua.NodeID
+	Name  string
+	Class ua.NodeClass
+}
+
+// varAttrs are the attributes read for a Variable node.
+type varAttrs struct {
+	Unreadable      bool // the read failed for this node; it is skipped
+	Description     string
+	AccessLevel     *uint8
+	UserAccessLevel *uint8
+	DataType        string
+}
+
+// addressSpace is what the walker needs from a session. sessionSpace
+// implements it with batched service calls; tests use an in-memory tree.
+type addressSpace interface {
+	// Describe reads NodeClass and BrowseName of a root node.
+	Describe(ctx context.Context, id *ua.NodeID) (nodeRef, error)
+	// Children returns the forward HasComponent, Organizes and HasProperty
+	// targets of each node, in that reference order.
+	Children(ctx context.Context, ids []*ua.NodeID) ([][]nodeRef, error)
+	// VariableAttributes reads description, access levels and data type.
+	VariableAttributes(ctx context.Context, ids []*ua.NodeID) ([]varAttrs, error)
+}
+
+func browseTree(ctx context.Context, as addressSpace, roots []*ua.NodeID, maxDepth, maxNodes int, namespaces []string) (BrowseResult, error) {
 	if maxDepth <= 0 {
 		maxDepth = 10
 	}
 	if maxNodes <= 0 {
 		maxNodes = 1000
 	}
-	w := &walker{client: client, maxDepth: maxDepth, maxNodes: maxNodes, visited: map[string]bool{}, namespaces: namespaces}
+	w := &walker{as: as, maxDepth: maxDepth, maxNodes: maxNodes, visited: map[string]bool{}, namespaces: namespaces}
 	for _, root := range roots {
-		if err := w.node(ctx, client.Node(root), "", 0); err != nil {
+		if w.truncated {
+			break
+		}
+		key := root.String()
+		if w.visited[key] {
+			continue
+		}
+		w.visited[key] = true
+		ref, err := as.Describe(ctx, root)
+		if err != nil {
+			return BrowseResult{}, fmt.Errorf("browse root %s unreadable: %w", key, err)
+		}
+		var attrs varAttrs
+		if ref.Class == ua.NodeClassVariable {
+			a, err := as.VariableAttributes(ctx, []*ua.NodeID{root})
+			if err != nil {
+				return BrowseResult{}, fmt.Errorf("browse root %s unreadable: %w", key, err)
+			}
+			attrs = a[0]
+		}
+		var kids []nodeRef
+		if maxDepth >= 1 {
+			k, err := as.Children(ctx, []*ua.NodeID{root})
+			if err != nil {
+				return BrowseResult{}, fmt.Errorf("browse root %s: %w", key, err)
+			}
+			kids = k[0]
+		}
+		if err := w.enter(ctx, ref, "", 0, attrs, kids); err != nil {
 			return BrowseResult{}, err
 		}
 	}
@@ -61,11 +130,15 @@ func BrowseVariables(ctx context.Context, client *opcua.Client, roots []*ua.Node
 		}
 		return out[i].Item.BrowsePath < out[j].Item.BrowsePath
 	})
-	return BrowseResult{Nodes: out, Truncated: w.truncated, Visited: len(w.visited)}, nil
+	requests := 0
+	if c, isCounter := as.(interface{ requestCount() int }); isCounter {
+		requests = c.requestCount()
+	}
+	return BrowseResult{Nodes: out, Truncated: w.truncated, Visited: len(w.visited), Requests: requests}, nil
 }
 
 type walker struct {
-	client     *opcua.Client
+	as         addressSpace
 	maxDepth   int
 	maxNodes   int
 	visited    map[string]bool
@@ -74,61 +147,328 @@ type walker struct {
 	truncated  bool
 }
 
-func (w *walker) full() bool {
-	if len(w.out) >= w.maxNodes {
-		w.truncated = true
-		return true
-	}
-	return false
-}
-
-func (w *walker) node(ctx context.Context, node *opcua.Node, parentPath string, level int) error {
-	if level > w.maxDepth || w.full() {
-		return nil
-	}
+// enter processes a node that was just marked visited at depth level. kids
+// are its prefetched children (nil when they would lie beyond maxDepth).
+func (w *walker) enter(ctx context.Context, ref nodeRef, parentPath string, level int, attrs varAttrs, kids []nodeRef) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	key := node.ID.String()
-	if w.visited[key] {
-		return nil
-	}
-	w.visited[key] = true
-
-	def, nodeClass, err := readDefinition(ctx, node, parentPath, w.namespaces)
-	if err != nil {
-		if level == 0 {
-			return fmt.Errorf("browse root %s unreadable: %w", key, err)
-		}
-		if IsConnectionError(err) {
-			return fmt.Errorf("read %s: %w", key, err)
-		}
-		log.Printf("browse: skip unreadable node=%s err=%v", key, err)
-		return nil
-	}
-	if nodeClass == ua.NodeClassVariable {
-		if w.full() {
+	path := joinPath(parentPath, ref.Name)
+	if ref.Class == ua.NodeClassVariable {
+		w.out = append(w.out, w.variable(ref, path, attrs))
+		if len(w.out) >= w.maxNodes {
+			w.truncated = true
 			return nil
 		}
-		w.out = append(w.out, def)
 	}
-	for _, refType := range []uint32{id.HasComponent, id.Organizes, id.HasProperty} {
-		children, err := node.ReferencedNodes(ctx, refType, ua.BrowseDirectionForward, ua.NodeClassAll, true)
-		if err != nil {
-			if IsConnectionError(err) {
-				return fmt.Errorf("browse %s: %w", key, err)
-			}
-			log.Printf("browse: children failed node=%s ref=%d err=%v", key, refType, err)
+	if len(kids) == 0 {
+		return nil
+	}
+
+	// Prefetch for the children that are not visited yet: their own
+	// children (when still within maxDepth) and their variable attributes.
+	childLevel := level + 1
+	pending := make([]nodeRef, 0, len(kids))
+	seen := map[string]bool{}
+	for _, k := range kids {
+		key := k.ID.String()
+		if w.visited[key] || seen[key] {
 			continue
 		}
-		for _, child := range children {
-			if err := w.node(ctx, child, def.Item.BrowsePath, level+1); err != nil {
-				return err
+		seen[key] = true
+		pending = append(pending, k)
+	}
+	var grandkids [][]nodeRef
+	if childLevel+1 <= w.maxDepth && len(pending) > 0 {
+		ids := make([]*ua.NodeID, len(pending))
+		for i, k := range pending {
+			ids[i] = k.ID
+		}
+		var err error
+		if grandkids, err = w.as.Children(ctx, ids); err != nil {
+			return fmt.Errorf("browse below %s: %w", path, err)
+		}
+	}
+	attrsByKey := map[string]varAttrs{}
+	var varIDs []*ua.NodeID
+	for _, k := range pending {
+		if k.Class == ua.NodeClassVariable {
+			varIDs = append(varIDs, k.ID)
+		}
+	}
+	if len(varIDs) > 0 {
+		got, err := w.as.VariableAttributes(ctx, varIDs)
+		if err != nil {
+			return fmt.Errorf("read below %s: %w", path, err)
+		}
+		for i, id := range varIDs {
+			attrsByKey[id.String()] = got[i]
+		}
+	}
+
+	for i, k := range pending {
+		key := k.ID.String()
+		if w.visited[key] {
+			continue // entered meanwhile through an earlier sibling's subtree
+		}
+		a := attrsByKey[key]
+		if a.Unreadable {
+			log.Printf("browse: skip unreadable node=%s", key)
+			continue
+		}
+		w.visited[key] = true
+		var next []nodeRef
+		if grandkids != nil {
+			next = grandkids[i]
+		}
+		if err := w.enter(ctx, k, path, childLevel, a, next); err != nil {
+			return err
+		}
+		if w.truncated {
+			return nil
+		}
+	}
+	return nil
+}
+
+func (w *walker) variable(ref nodeRef, path string, a varAttrs) VariableNode {
+	item := inventory.Item{
+		NodeID:         ref.ID.String(),
+		NamespaceIndex: ref.ID.Namespace(),
+		NodeClass:      ref.Class.String(),
+		BrowseName:     ref.Name,
+		BrowsePath:     path,
+		Description:    a.Description,
+		DataType:       a.DataType,
+	}
+	if int(item.NamespaceIndex) < len(w.namespaces) {
+		item.NamespaceURI = w.namespaces[item.NamespaceIndex]
+	}
+	if a.AccessLevel != nil {
+		item.AccessLevel = *a.AccessLevel
+		item.Writable = ua.AccessLevelType(*a.AccessLevel)&ua.AccessLevelTypeCurrentWrite != 0
+	}
+	if a.UserAccessLevel != nil {
+		item.UserAccessLevel = *a.UserAccessLevel
+		item.UserWritable = ua.AccessLevelType(*a.UserAccessLevel)&ua.AccessLevelTypeCurrentWrite != 0
+	}
+	return VariableNode{NodeID: ref.ID, Item: item}
+}
+
+// Batch sizes stay well below common server operation limits
+// (MaxNodesPerBrowse, MaxNodesPerRead); three browse descriptions and four
+// read values are sent per node.
+const (
+	browseBatch = 32
+	readBatch   = 64
+)
+
+var childReferenceTypes = []uint32{id.HasComponent, id.Organizes, id.HasProperty}
+
+// sessionSpace implements addressSpace on an OPC UA session.
+type sessionSpace struct {
+	client   *opcua.Client
+	requests int
+}
+
+func (s *sessionSpace) requestCount() int { return s.requests }
+
+func (s *sessionSpace) Describe(ctx context.Context, nid *ua.NodeID) (nodeRef, error) {
+	s.requests++
+	res, err := s.client.Read(ctx, &ua.ReadRequest{
+		NodesToRead: []*ua.ReadValueID{
+			{NodeID: nid, AttributeID: ua.AttributeIDNodeClass},
+			{NodeID: nid, AttributeID: ua.AttributeIDBrowseName},
+		},
+		TimestampsToReturn: ua.TimestampsToReturnNeither,
+	})
+	if err != nil {
+		return nodeRef{}, err
+	}
+	if len(res.Results) != 2 {
+		return nodeRef{}, fmt.Errorf("read returned %d results for 2 attributes", len(res.Results))
+	}
+	if res.Results[0].Status != ua.StatusOK {
+		return nodeRef{}, res.Results[0].Status
+	}
+	ref := nodeRef{ID: nid, Name: nid.String()}
+	if v, isInt := variantUint(res.Results[0].Value); isInt {
+		ref.Class = ua.NodeClass(v)
+	}
+	if ok(res.Results[1]) {
+		if qn, isQN := res.Results[1].Value.Value().(*ua.QualifiedName); isQN && qn != nil {
+			ref.Name = qn.Name
+		} else {
+			ref.Name = stripNamespacePrefix(res.Results[1].Value.String())
+		}
+	}
+	return ref, nil
+}
+
+func (s *sessionSpace) Children(ctx context.Context, ids []*ua.NodeID) ([][]nodeRef, error) {
+	out := make([][]nodeRef, len(ids))
+	for start := 0; start < len(ids); start += browseBatch {
+		end := min(start+browseBatch, len(ids))
+		if err := s.browseChunk(ctx, ids[start:end], out[start:end]); err != nil {
+			if IsConnectionError(err) || end-start == 1 {
+				if IsConnectionError(err) {
+					return nil, err
+				}
+				log.Printf("browse: children failed node=%s err=%v", ids[start], err)
+				continue
 			}
-			if w.truncated {
-				return nil
+			// A service error that is not about the connection (for example
+			// too many operations): retry node by node rather than lose a
+			// whole batch of subtrees.
+			for i := start; i < end; i++ {
+				if err := s.browseChunk(ctx, ids[i:i+1], out[i:i+1]); err != nil {
+					if IsConnectionError(err) {
+						return nil, err
+					}
+					log.Printf("browse: children failed node=%s err=%v", ids[i], err)
+				}
 			}
 		}
+	}
+	return out, nil
+}
+
+func (s *sessionSpace) browseChunk(ctx context.Context, ids []*ua.NodeID, out [][]nodeRef) error {
+	descs := make([]*ua.BrowseDescription, 0, len(ids)*len(childReferenceTypes))
+	for _, nid := range ids {
+		for _, rt := range childReferenceTypes {
+			descs = append(descs, &ua.BrowseDescription{
+				NodeID:          nid,
+				BrowseDirection: ua.BrowseDirectionForward,
+				ReferenceTypeID: ua.NewNumericNodeID(0, rt),
+				IncludeSubtypes: true,
+				NodeClassMask:   uint32(ua.NodeClassAll),
+				ResultMask:      uint32(ua.BrowseResultMaskAll),
+			})
+		}
+	}
+	s.requests++
+	resp, err := s.client.Browse(ctx, &ua.BrowseRequest{
+		View:                          &ua.ViewDescription{ViewID: ua.NewTwoByteNodeID(0)},
+		RequestedMaxReferencesPerNode: 0,
+		NodesToBrowse:                 descs,
+	})
+	if err != nil {
+		return err
+	}
+	if len(resp.Results) != len(descs) {
+		return fmt.Errorf("browse returned %d results for %d descriptions", len(resp.Results), len(descs))
+	}
+	for i, r := range resp.Results {
+		n := i / len(childReferenceTypes)
+		if r.StatusCode != ua.StatusOK {
+			log.Printf("browse: children failed node=%s ref=%d status=%s", ids[n], childReferenceTypes[i%len(childReferenceTypes)], r.StatusCode)
+			continue
+		}
+		refs := r.References
+		cp := r.ContinuationPoint
+		for len(cp) > 0 {
+			s.requests++
+			next, err := s.client.BrowseNext(ctx, &ua.BrowseNextRequest{ContinuationPoints: [][]byte{cp}})
+			if err != nil {
+				return err
+			}
+			if len(next.Results) != 1 || next.Results[0].StatusCode != ua.StatusOK {
+				return fmt.Errorf("browse next for %s failed", ids[n])
+			}
+			refs = append(refs, next.Results[0].References...)
+			cp = next.Results[0].ContinuationPoint
+		}
+		for _, ref := range refs {
+			if ref == nil || ref.NodeID == nil || ref.NodeID.NodeID == nil || ref.NodeID.ServerIndex != 0 {
+				continue
+			}
+			name := ref.NodeID.NodeID.String()
+			if ref.BrowseName != nil {
+				name = ref.BrowseName.Name
+			}
+			out[n] = append(out[n], nodeRef{ID: ref.NodeID.NodeID, Name: name, Class: ref.NodeClass})
+		}
+	}
+	return nil
+}
+
+var variableAttributeIDs = []ua.AttributeID{ua.AttributeIDDescription, ua.AttributeIDAccessLevel, ua.AttributeIDUserAccessLevel, ua.AttributeIDDataType}
+
+func (s *sessionSpace) VariableAttributes(ctx context.Context, ids []*ua.NodeID) ([]varAttrs, error) {
+	out := make([]varAttrs, len(ids))
+	for start := 0; start < len(ids); start += readBatch {
+		end := min(start+readBatch, len(ids))
+		if err := s.readChunk(ctx, ids[start:end], out[start:end]); err != nil {
+			if IsConnectionError(err) {
+				return nil, err
+			}
+			for i := start; i < end; i++ {
+				if err := s.readChunk(ctx, ids[i:i+1], out[i:i+1]); err != nil {
+					if IsConnectionError(err) {
+						return nil, err
+					}
+					log.Printf("browse: attributes failed node=%s err=%v", ids[i], err)
+					out[i].Unreadable = true
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
+func (s *sessionSpace) readChunk(ctx context.Context, ids []*ua.NodeID, out []varAttrs) error {
+	req := &ua.ReadRequest{TimestampsToReturn: ua.TimestampsToReturnNeither}
+	for _, nid := range ids {
+		for _, a := range variableAttributeIDs {
+			req.NodesToRead = append(req.NodesToRead, &ua.ReadValueID{NodeID: nid, AttributeID: a})
+		}
+	}
+	s.requests++
+	res, err := s.client.Read(ctx, req)
+	if err != nil {
+		return err
+	}
+	if len(res.Results) != len(req.NodesToRead) {
+		return fmt.Errorf("read returned %d results for %d attributes", len(res.Results), len(req.NodesToRead))
+	}
+	for i := range ids {
+		r := res.Results[i*len(variableAttributeIDs):]
+		a := varAttrs{}
+		if ok(r[0]) {
+			if lt, isLT := r[0].Value.Value().(*ua.LocalizedText); isLT && lt != nil {
+				a.Description = strings.TrimSpace(lt.Text)
+			} else {
+				a.Description = strings.TrimSpace(r[0].Value.String())
+			}
+		}
+		if ok(r[1]) {
+			if v, isInt := variantUint(r[1].Value); isInt {
+				b := uint8(v)
+				a.AccessLevel = &b
+			}
+		}
+		if ok(r[2]) {
+			if v, isInt := variantUint(r[2].Value); isInt {
+				b := uint8(v)
+				a.UserAccessLevel = &b
+			}
+		}
+		if ok(r[3]) {
+			if nid, isNID := r[3].Value.Value().(*ua.NodeID); isNID {
+				a.DataType = DataTypeName(nid)
+			}
+		} else if r[3] != nil {
+			if NodeGone(r[3].Status) {
+				// Deleted between Browse and Read: it is not part of the
+				// address space any more, so it is not part of the inventory.
+				log.Printf("browse: node=%s vanished during the browse (%s), skipped", ids[i], StatusName(r[3].Status))
+				a.Unreadable = true
+			} else {
+				log.Printf("browse: node=%s data type unreadable (%s), recorded without data type", ids[i], StatusName(r[3].Status))
+			}
+		}
+		out[i] = a
 	}
 	return nil
 }
@@ -169,70 +509,6 @@ func IsConnectionError(err error) bool {
 		return !nodeLevelStatus[code]
 	}
 	return true
-}
-
-func readDefinition(ctx context.Context, node *opcua.Node, parentPath string, namespaces []string) (VariableNode, ua.NodeClass, error) {
-	attrs, err := node.Attributes(ctx,
-		ua.AttributeIDNodeClass,
-		ua.AttributeIDBrowseName,
-		ua.AttributeIDDescription,
-		ua.AttributeIDAccessLevel,
-		ua.AttributeIDUserAccessLevel,
-		ua.AttributeIDDataType,
-	)
-	if err != nil {
-		return VariableNode{}, 0, err
-	}
-	if len(attrs) < 6 {
-		return VariableNode{}, 0, fmt.Errorf("expected 6 attributes, got %d", len(attrs))
-	}
-	item := inventory.Item{NodeID: node.ID.String(), NamespaceIndex: node.ID.Namespace()}
-	if int(item.NamespaceIndex) < len(namespaces) {
-		item.NamespaceURI = namespaces[item.NamespaceIndex]
-	}
-
-	var nodeClass ua.NodeClass
-	if ok(attrs[0]) {
-		if v, isInt := variantUint(attrs[0].Value); isInt {
-			nodeClass = ua.NodeClass(v)
-		}
-	}
-	item.NodeClass = nodeClass.String()
-
-	item.BrowseName = node.ID.String()
-	if ok(attrs[1]) {
-		if qn, isQN := attrs[1].Value.Value().(*ua.QualifiedName); isQN && qn != nil {
-			item.BrowseName = qn.Name
-		} else {
-			item.BrowseName = stripNamespacePrefix(attrs[1].Value.String())
-		}
-	}
-	if ok(attrs[2]) {
-		if lt, isLT := attrs[2].Value.Value().(*ua.LocalizedText); isLT && lt != nil {
-			item.Description = strings.TrimSpace(lt.Text)
-		} else {
-			item.Description = strings.TrimSpace(attrs[2].Value.String())
-		}
-	}
-	if ok(attrs[3]) {
-		if v, isInt := variantUint(attrs[3].Value); isInt {
-			item.AccessLevel = uint8(v)
-			item.Writable = ua.AccessLevelType(v)&ua.AccessLevelTypeCurrentWrite != 0
-		}
-	}
-	if ok(attrs[4]) {
-		if v, isInt := variantUint(attrs[4].Value); isInt {
-			item.UserAccessLevel = uint8(v)
-			item.UserWritable = ua.AccessLevelType(v)&ua.AccessLevelTypeCurrentWrite != 0
-		}
-	}
-	if ok(attrs[5]) {
-		if nid, isNID := attrs[5].Value.Value().(*ua.NodeID); isNID {
-			item.DataType = DataTypeName(nid)
-		}
-	}
-	item.BrowsePath = joinPath(parentPath, item.BrowseName)
-	return VariableNode{NodeID: node.ID, Item: item}, nodeClass, nil
 }
 
 func ok(dv *ua.DataValue) bool {
@@ -332,6 +608,34 @@ func DataTypeName(nodeID *ua.NodeID) string {
 		return "localizedtext"
 	case id.NodeID:
 		return "nodeid"
+	case id.GUID:
+		return "guid"
+	case id.XMLElement:
+		return "xmlelement"
+	case id.ExpandedNodeID:
+		return "expandednodeid"
+	case id.StatusCode:
+		return "statuscode"
+	case id.QualifiedName:
+		return "qualifiedname"
+	case id.Structure:
+		return "structure"
+	case id.DataValue:
+		return "datavalue"
+	case id.BaseDataType:
+		return "variant"
+	case id.DiagnosticInfo:
+		return "diagnosticinfo"
+	case id.Number:
+		return "number"
+	case id.Integer:
+		return "integer"
+	case id.UInteger:
+		return "uinteger"
+	case id.Enumeration:
+		return "enumeration"
+	case id.Decimal:
+		return "decimal"
 	default:
 		return nodeID.String()
 	}

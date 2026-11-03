@@ -23,6 +23,7 @@ type Inspection struct {
 	Fingerprint string           `json:"fingerprint"`
 	Truncated   bool             `json:"truncated"`
 	Visited     int              `json:"visited"`
+	Requests    int              `json:"requests"`
 	Took        string           `json:"took"`
 	Items       []inventory.Item `json:"items"`
 }
@@ -65,7 +66,7 @@ func Inspect(ctx context.Context, cfg *config.Config) (*Inspection, error) {
 		items = append(items, n.Item)
 	}
 	return &Inspection{Endpoint: cfg.Source.Endpoint, Session: info, Namespaces: namespaces, BrowseRoots: cfg.Source.BrowseRoots,
-		Fingerprint: inventory.Fingerprint(items), Truncated: res.Truncated, Visited: res.Visited,
+		Fingerprint: inventory.Fingerprint(items), Truncated: res.Truncated, Visited: res.Visited, Requests: res.Requests,
 		Took: time.Since(started).Round(time.Millisecond).String(), Items: items}, nil
 }
 

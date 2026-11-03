@@ -334,7 +334,7 @@ func browseCmd(args []string) int {
 	fmt.Printf("endpoint     %s\n", ins.Endpoint)
 	fmt.Printf("session      auth=%s policy=%s mode=%s server_uri=%s\n", ins.Session.Auth, ins.Session.SecurityPolicy, ins.Session.SecurityMode, ins.Session.ServerURI)
 	fmt.Printf("roots        %s\n", strings.Join(ins.BrowseRoots, ", "))
-	fmt.Printf("variables    %d (visited %d nodes in %s)\n", len(ins.Items), ins.Visited, ins.Took)
+	fmt.Printf("variables    %d (visited %d nodes with %d requests in %s)\n", len(ins.Items), ins.Visited, ins.Requests, ins.Took)
 	if ins.Truncated {
 		fmt.Printf("truncated    yes: max_nodes=%d reached, raise it or narrow browse_roots\n", cfg.Source.MaxNodes)
 	}

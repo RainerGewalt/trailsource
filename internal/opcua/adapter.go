@@ -398,8 +398,8 @@ func (a *Adapter) browseAndReconcile(ctx context.Context, client *opcua.Client, 
 		if previous.Fingerprint == fp {
 			snap.Generation = previous.Generation
 			a.setInventory(fp, snap.Generation)
-			log.Printf("browse complete variables=%d visited=%d truncated=%v took=%s inventory_hash=%s generation=%d unchanged",
-				len(items), res.Visited, res.Truncated, time.Since(started).Round(time.Millisecond), fp, snap.Generation)
+			log.Printf("browse complete variables=%d visited=%d requests=%d truncated=%v took=%s inventory_hash=%s generation=%d unchanged",
+				len(items), res.Visited, res.Requests, res.Truncated, time.Since(started).Round(time.Millisecond), fp, snap.Generation)
 			return nodes, nil
 		}
 		snap.Generation = previous.Generation + 1
@@ -408,8 +408,8 @@ func (a *Adapter) browseAndReconcile(ctx context.Context, client *opcua.Client, 
 	}
 	a.setInventory(fp, snap.Generation)
 	reasonCode := status.Inventory(changeKind == "initial", len(diff.Added), len(diff.Removed), len(diff.Changed))
-	log.Printf("browse complete variables=%d visited=%d truncated=%v took=%s inventory_hash=%s generation=%d change=%s reason_code=%s added=%d removed=%d changed=%d",
-		len(items), res.Visited, res.Truncated, time.Since(started).Round(time.Millisecond), fp, snap.Generation, changeKind, reasonCode, len(diff.Added), len(diff.Removed), len(diff.Changed))
+	log.Printf("browse complete variables=%d visited=%d requests=%d truncated=%v took=%s inventory_hash=%s generation=%d change=%s reason_code=%s added=%d removed=%d changed=%d",
+		len(items), res.Visited, res.Requests, res.Truncated, time.Since(started).Round(time.Millisecond), fp, snap.Generation, changeKind, reasonCode, len(diff.Added), len(diff.Removed), len(diff.Changed))
 
 	payload := map[string]any{
 		"reason_code":          reasonCode,
@@ -470,6 +470,7 @@ func (a *Adapter) subscribeUntilRebrowse(ctx context.Context, client *opcua.Clie
 	}()
 
 	byHandle := map[uint32]*boundNode{}
+	revised := map[float64]int{} // revised sampling interval (ms) -> monitored items
 	var handle uint32 = 1
 	batch := a.cfg.Source.SubscriptionBatchSize
 	for start := 0; start < len(nodes); start += batch {
@@ -482,7 +483,9 @@ func (a *Adapter) subscribeUntilRebrowse(ctx context.Context, client *opcua.Clie
 		for _, n := range nodes[start:end] {
 			h := handle
 			handle++
-			requests = append(requests, opcua.NewMonitoredItemCreateRequestWithDefaults(n.NodeID, ua.AttributeIDValue, h))
+			req := opcua.NewMonitoredItemCreateRequestWithDefaults(n.NodeID, ua.AttributeIDValue, h)
+			req.RequestedParameters.SamplingInterval = float64(a.cfg.SamplingInterval().Milliseconds())
+			requests = append(requests, req)
 			handles = append(handles, h)
 			byHandle[h] = &boundNode{node: n, res: a.mapping.Resolve(n.Item.BrowsePath, n.Item.BrowseName)}
 		}
@@ -491,6 +494,9 @@ func (a *Adapter) subscribeUntilRebrowse(ctx context.Context, client *opcua.Clie
 			return fmt.Errorf("monitor batch %d-%d: %w", start, end, err)
 		}
 		for i, r := range res.Results {
+			if r.StatusCode == ua.StatusOK {
+				revised[r.RevisedSamplingInterval]++
+			}
 			if i < len(handles) && r.StatusCode != ua.StatusOK {
 				n := byHandle[handles[i]]
 				log.Printf("monitor rejected path=%s node=%s status=%s", n.node.Item.BrowsePath, n.node.Item.NodeID, r.StatusCode)
@@ -501,10 +507,13 @@ func (a *Adapter) subscribeUntilRebrowse(ctx context.Context, client *opcua.Clie
 	a.mu.Lock()
 	a.nodesByHandle = byHandle
 	a.mu.Unlock()
-	log.Printf("subscribed monitored_items=%d subscription_id=%d interval=%s", len(byHandle), sub.SubscriptionID, a.cfg.SubscriptionInterval())
+	log.Printf("subscribed monitored_items=%d subscription_id=%d interval=%s sampling_requested=%s sampling_revised_ms=%v",
+		len(byHandle), sub.SubscriptionID, a.cfg.SubscriptionInterval(), a.cfg.SamplingInterval(), revised)
 
 	rebrowse := time.NewTimer(a.cfg.RebrowseInterval())
 	defer rebrowse.Stop()
+	subscribedAt := time.Now()
+	rebrowseSoon := false
 	// A dead server does not always close the notification channel; the
 	// client state does change, so it is polled once per second.
 	stateCheck := time.NewTicker(time.Second)
@@ -538,10 +547,31 @@ func (a *Adapter) subscribeUntilRebrowse(ctx context.Context, client *opcua.Clie
 						continue
 					}
 					a.handleValue(bn, item.Value, readAt)
+					if !rebrowseSoon && item.Value != nil && NodeGone(item.Value.Status) {
+						// The server deleted a node we monitor: the address
+						// space changed, so browse again instead of waiting
+						// for the interval, at most once per minRebrowse.
+						rebrowseSoon = true
+						delay := max(minRebrowse-time.Since(subscribedAt), 0)
+						log.Printf("monitored node %s reports %s: address space changed on the server, re-browsing in %s",
+							bn.node.Item.NodeID, StatusName(item.Value.Status), delay.Round(time.Millisecond))
+						rebrowse.Reset(delay)
+					}
 				}
 			}
 		}
 	}
+}
+
+// minRebrowse is the shortest time between two browses triggered by deleted
+// nodes, so a server that churns its address space cannot keep the adapter
+// browsing.
+const minRebrowse = 5 * time.Second
+
+// NodeGone reports whether a monitored item's status says the node no longer
+// exists in the server's address space.
+func NodeGone(code ua.StatusCode) bool {
+	return code == ua.StatusBadNodeIDUnknown || code == ua.StatusBadNodeIDInvalid
 }
 
 func (a *Adapter) handleValue(bn *boundNode, dv *ua.DataValue, readAt time.Time) {
