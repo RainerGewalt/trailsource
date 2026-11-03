@@ -164,6 +164,46 @@ verifier with the same findings.
   controls the file can rewrite and re-seal all of it.
 - It is not a broker, historian, dashboard or rules engine.
 
+## Install
+
+Binaries for Linux, macOS and Windows (amd64, arm64) are attached to every
+[release](https://github.com/RainerGewalt/trailsource/releases), with
+`checksums.txt`. Each archive holds `trailsource`, `LICENSE`, `NOTICE`,
+this README and `docs/CONNECT_YOUR_SERVER.md`.
+
+With Go 1.24 or newer:
+
+```sh
+go install github.com/RainerGewalt/trailsource/cmd/trailsource@latest
+```
+
+Container image (linux/amd64, linux/arm64, runs as uid 10001, contains the
+OPC UA adapter only):
+
+```sh
+docker pull ghcr.io/rainergewalt/trailsource:0.1.0
+docker run --rm ghcr.io/rainergewalt/trailsource:0.1.0 endpoints opc.tcp://192.0.2.10:4840
+```
+
+Against a server of your own: write the configuration as described in
+`docs/CONNECT_YOUR_SERVER.md` with container paths (`pki_dir: /pki`,
+`state_dir: /state`, `journal.path: /journal/<source-id>.jsonl`) and an MQTT
+broker the container can reach, then
+
+```sh
+docker run --rm --read-only --user "$(id -u):$(id -g)" \
+  -v "$PWD/my-server.yaml:/config/trailsource.yaml:ro" \
+  -v "$PWD/pki:/pki" -v "$PWD/state:/state" -v "$PWD/journal:/journal" \
+  -e TRAILSOURCE_OPCUA_USERNAME -e TRAILSOURCE_OPCUA_PASSWORD \
+  ghcr.io/rainergewalt/trailsource:0.1.0 run --config /config/trailsource.yaml
+```
+
+TrailSource only reads from the server; `--read-only` also keeps the
+container's own filesystem read-only, so the three mounted directories are
+the only places it writes (trust list decisions in `pki/rejected`, chain
+and inventory state, journal). Run `browse` instead of `run` with the same
+mounts for a first look without MQTT.
+
 ## Quick start
 
 ```sh
