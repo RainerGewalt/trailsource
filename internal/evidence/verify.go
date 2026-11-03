@@ -9,19 +9,19 @@ import (
 	"sort"
 )
 
-// IssueKind classifies a verification finding. Restarts are informational,
-// gaps and breaks are failures of different nature and are reported apart.
+// IssueKind classifies a verification finding. The values are the finding
+// classes of the Trail Evidence Record specification (SPEC.md section 6.1 in
+// the trail-evidence repository), so a TrailSource report and the reference
+// verifier name the same problem the same way. Restarts are notices; every
+// other kind is an error. Detail says which hash or link was affected.
 type IssueKind string
 
 const (
-	IssueRestart     IssueKind = "restart"      // chain_restart record; prev_hash == anchor_hash checked
-	IssueGap         IssueKind = "gap"          // seq is not previous + 1 without chain_restart
-	IssueContentHash IssueKind = "content_hash" // recomputed content_hash differs
-	IssueChainHash   IssueKind = "chain_hash"   // recomputed chain_hash differs
-	IssuePrevHash    IssueKind = "prev_hash"    // prev_hash does not link to the previous record
-	IssueSchema      IssueKind = "schema"       // unknown schema or malformed record
-	IssueAnchorHash  IssueKind = "anchor_hash"  // chain_restart without consistent anchor
-	IssueUnparsable  IssueKind = "unparsable"   // line is not a JSON object
+	IssueRestart       IssueKind = "restart"        // notice: chain_restart record, anchor consistent
+	IssueSeqGap        IssueKind = "seq_gap"        // seq is not previous + 1 without chain_restart
+	IssueHashMismatch  IssueKind = "hash_mismatch"  // recomputed content_hash or chain_hash differs
+	IssueChainBreak    IssueKind = "chain_break"    // prev_hash or restart anchor does not link to the previous record
+	IssueSchemaInvalid IssueKind = "schema_invalid" // unknown schema, malformed or unparsable record
 )
 
 // Issue is one verification finding.
@@ -33,8 +33,8 @@ type Issue struct {
 	Detail   string    `json:"detail"`
 }
 
-// IsBreak reports whether the issue is an integrity failure (as opposed to an
-// informational restart).
+// IsBreak reports whether the issue is an integrity failure (as opposed to a
+// restart notice).
 func (i Issue) IsBreak() bool {
 	return i.Kind != IssueRestart
 }
@@ -96,7 +96,7 @@ func VerifyJournal(r io.Reader) (Report, error) {
 		dec.UseNumber()
 		var m map[string]any
 		if err := dec.Decode(&m); err != nil {
-			report.Issues = append(report.Issues, Issue{Kind: IssueUnparsable, Line: lineNo, Seq: -1, Detail: err.Error()})
+			report.Issues = append(report.Issues, Issue{Kind: IssueSchemaInvalid, Line: lineNo, Seq: -1, Detail: err.Error()})
 			continue
 		}
 		report.Records++
@@ -142,7 +142,7 @@ func verifyStream(sid string, recs []parsed, issues *[]Issue) StreamReport {
 		switch kind {
 		case IssueRestart:
 			sr.Restarts++
-		case IssueGap:
+		case IssueSeqGap:
 			sr.Gaps++
 		default:
 			sr.Breaks++
@@ -160,34 +160,42 @@ func verifyStream(sid string, recs []parsed, issues *[]Issue) StreamReport {
 
 		// (1) schema and shape
 		if s, _ := m["schema"].(string); s != Schema {
-			add(IssueSchema, p, seq, fmt.Sprintf("unsupported schema %q", s))
+			add(IssueSchemaInvalid, p, seq, fmt.Sprintf("unsupported schema %q", s))
 		}
 		if seq < 0 {
-			add(IssueSchema, p, seq, "seq missing or not a non-negative integer")
+			add(IssueSchemaInvalid, p, seq, "seq missing or not a non-negative integer")
 		}
 		payload, hasPayload := m["payload"]
 		if !hasPayload {
-			add(IssueSchema, p, seq, "payload missing")
+			add(IssueSchemaInvalid, p, seq, "payload missing")
 		}
 
 		// (2) content_hash
 		gotContent, _ := m["content_hash"].(string)
+		recomputedContent := gotContent
 		if hasPayload {
 			want, err := Hash(payload)
 			if err != nil {
-				add(IssueContentHash, p, seq, "payload not canonicalisable: "+err.Error())
-			} else if want != gotContent {
-				add(IssueContentHash, p, seq, fmt.Sprintf("content_hash %s, recomputed %s", gotContent, want))
+				add(IssueHashMismatch, p, seq, "content_hash: payload not canonicalisable: "+err.Error())
+			} else {
+				recomputedContent = want
+				if want != gotContent {
+					add(IssueHashMismatch, p, seq, fmt.Sprintf("content_hash recorded %s, recomputed %s", gotContent, want))
+				}
 			}
 		}
 
-		// (3) chain_hash
+		// (3) chain_hash over the core with the recomputed content_hash, as
+		// the specification and the reference verifier do: an edited payload
+		// therefore shows up in both hashes of its own line.
 		gotChain, _ := m["chain_hash"].(string)
-		wantChain, err := Hash(coreFromMap(m))
+		core := coreFromMap(m)
+		core["content_hash"] = recomputedContent
+		wantChain, err := Hash(core)
 		if err != nil {
-			add(IssueChainHash, p, seq, "core not canonicalisable: "+err.Error())
+			add(IssueHashMismatch, p, seq, "chain_hash: core not canonicalisable: "+err.Error())
 		} else if wantChain != gotChain {
-			add(IssueChainHash, p, seq, fmt.Sprintf("chain_hash %s, recomputed %s", gotChain, wantChain))
+			add(IssueHashMismatch, p, seq, fmt.Sprintf("chain_hash recorded %s, recomputed %s", gotChain, wantChain))
 		}
 
 		// (4) and (5) linkage
@@ -197,13 +205,13 @@ func verifyStream(sid string, recs []parsed, issues *[]Issue) StreamReport {
 		switch {
 		case restart:
 			if !IsHash(anchor) {
-				add(IssueAnchorHash, p, seq, "chain_restart without anchor_hash")
+				add(IssueSchemaInvalid, p, seq, "chain_restart without anchor_hash")
 			} else if anchor != prev {
-				add(IssueAnchorHash, p, seq, "chain_restart with prev_hash != anchor_hash")
+				add(IssueSchemaInvalid, p, seq, "chain_restart with prev_hash != anchor_hash")
 			} else if !first && prevHash != "" && anchor != prevHash {
 				// The previous segment is in this journal, so the anchor must
 				// point at its last chain_hash (same rule as the reference verifier).
-				add(IssueAnchorHash, p, seq, fmt.Sprintf("anchor_hash %s does not match the last chain_hash %s of the previous segment", anchor, prevHash))
+				add(IssueChainBreak, p, seq, fmt.Sprintf("anchor_hash %s does not match the last chain_hash %s of the previous segment", anchor, prevHash))
 			} else {
 				detail := fmt.Sprintf("restart at seq %d, anchor %s", seq, anchor)
 				if first {
@@ -213,14 +221,14 @@ func verifyStream(sid string, recs []parsed, issues *[]Issue) StreamReport {
 			}
 		case first:
 			if prev != GenesisHash {
-				add(IssuePrevHash, p, seq, fmt.Sprintf("first record prev_hash %s is not genesis and not a restart", prev))
+				add(IssueChainBreak, p, seq, fmt.Sprintf("first record prev_hash %s is not genesis and not a restart", prev))
 			}
 		default:
 			if prev != prevHash {
-				add(IssuePrevHash, p, seq, fmt.Sprintf("prev_hash %s does not match previous chain_hash %s", prev, prevHash))
+				add(IssueChainBreak, p, seq, fmt.Sprintf("prev_hash %s does not match previous chain_hash %s", prev, prevHash))
 			}
 			if seq != prevSeq+1 {
-				add(IssueGap, p, seq, fmt.Sprintf("seq %d follows %d", seq, prevSeq))
+				add(IssueSeqGap, p, seq, fmt.Sprintf("seq %d follows %d", seq, prevSeq))
 			}
 		}
 

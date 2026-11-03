@@ -56,10 +56,10 @@ func TestVerifyDetectsTamperedPayload(t *testing.T) {
 	for _, i := range rep.Issues {
 		kinds[i.Kind] = true
 	}
-	if !kinds[IssueContentHash] {
-		t.Fatalf("expected content_hash issue, got %+v", rep.Issues)
+	if !kinds[IssueHashMismatch] {
+		t.Fatalf("expected hash_mismatch, got %+v", rep.Issues)
 	}
-	if kinds[IssuePrevHash] {
+	if kinds[IssueChainBreak] {
 		t.Fatalf("payload tamper must not be reported as a link break: %+v", rep.Issues)
 	}
 }
@@ -73,11 +73,11 @@ func TestVerifyDetectsRemovedRecordAsBreak(t *testing.T) {
 	}
 	var sawPrev, sawGap bool
 	for _, i := range rep.Issues {
-		sawPrev = sawPrev || i.Kind == IssuePrevHash
-		sawGap = sawGap || i.Kind == IssueGap
+		sawPrev = sawPrev || i.Kind == IssueChainBreak
+		sawGap = sawGap || i.Kind == IssueSeqGap
 	}
 	if !sawPrev || !sawGap {
-		t.Fatalf("expected prev_hash and gap issues, got %+v", rep.Issues)
+		t.Fatalf("expected chain_break and seq_gap, got %+v", rep.Issues)
 	}
 }
 
@@ -114,5 +114,51 @@ func TestVerifyRestartWithWrongAnchorIsBreak(t *testing.T) {
 	rep, _ := VerifyJournal(strings.NewReader(journal(append(recs, r))))
 	if rep.OK() || rep.Streams[0].Breaks != 1 || rep.Streams[0].Restarts != 0 {
 		t.Fatalf("mismatching anchor must be a break: %+v %+v", rep.Streams[0], rep.Issues)
+	}
+}
+
+func issuesOnLine(rep Report, line int) []IssueKind {
+	var out []IssueKind
+	for _, i := range rep.Issues {
+		if i.Line == line {
+			out = append(out, i.Kind)
+		}
+	}
+	return out
+}
+
+// An edited payload without new hashes fails both hashes of its own line and
+// nothing else: the next record links to the declared chain_hash.
+func TestVerifyEditedPayloadIsLocalHashMismatch(t *testing.T) {
+	recs := sealedChain(t, 4)
+	recs[1].Payload = map[string]any{"i": 42}
+	rep, _ := VerifyJournal(strings.NewReader(journal(recs)))
+	got := issuesOnLine(rep, 2)
+	if len(got) != 2 || got[0] != IssueHashMismatch || got[1] != IssueHashMismatch {
+		t.Fatalf("line 2: want content and chain hash_mismatch, got %v (%+v)", got, rep.Issues)
+	}
+	if n := len(issuesOnLine(rep, 3)); n != 0 {
+		t.Fatalf("line 3 must stay clean, got %+v", rep.Issues)
+	}
+}
+
+// An edited payload that is re-sealed passes on its own line; the following
+// record then no longer links to it.
+func TestVerifyResealedEditBreaksNextLine(t *testing.T) {
+	recs := sealedChain(t, 4)
+	recs[1].Payload = map[string]any{"i": 42}
+	if err := Seal(&recs[1]); err != nil {
+		t.Fatal(err)
+	}
+	rep, _ := VerifyJournal(strings.NewReader(journal(recs)))
+	if got := issuesOnLine(rep, 2); len(got) != 0 {
+		t.Fatalf("re-sealed line 2 should verify on its own, got %v", got)
+	}
+	got := issuesOnLine(rep, 3)
+	if len(got) != 1 || got[0] != IssueChainBreak {
+		t.Fatalf("line 3: want chain_break, got %v (%+v)", got, rep.Issues)
+	}
+	if rep.OK() {
+		t.Fatal("re-sealed edit accepted")
 	}
 }
