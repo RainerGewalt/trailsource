@@ -1,0 +1,44 @@
+# TrailSource OPC UA adapter configuration for the local scenario runs
+# (scripts/scenario.sh, docs/SCENARIOS.md). Everything that differs from
+# configs/opcua-extruder.yaml is driven by environment variables so one file
+# serves every scenario: ports, the scenario directory and the intervals.
+# Placeholders are expanded before config_version is computed.
+revision: "1"
+
+producer:
+  id: trailsource-opcua-extruder-01
+
+site: plant-a
+line: ext-01
+device: extruder-01
+
+source:
+  id: plant-a-ext-01-extruder-01-opcua
+  endpoint: opc.tcp://127.0.0.1:${SCENARIO_OPC_PORT}/trailsource
+  security_policy: None          # lab only
+  security_mode: None
+  auth: anonymous
+  browse_roots:
+    - "ns=2;s=Plant"
+  max_depth: 16
+  max_nodes: 2500
+  subscription_interval_ms: 500
+  subscription_batch_size: 50
+  rebrowse_interval_s: ${SCENARIO_REBROWSE_S}
+  session_backoff_s: ${SCENARIO_BACKOFF_S}
+  request_timeout_s: 5
+
+mqtt:
+  broker: tcp://127.0.0.1:${SCENARIO_MQTT_PORT}
+  client_id: trailsource-opcua-extruder-01
+  qos: 1
+  topic_prefix: trailsource/plant-a/ext-01/extruder-01
+  publish_node_topics: false
+  health_interval_s: 5
+
+mapping_file: configs/mapping/extruder.yaml
+state_dir: ${SCENARIO_DIR}/state
+
+journal:
+  enabled: true
+  path: ${SCENARIO_DIR}/journal/plant-a-ext-01-extruder-01-opcua.jsonl
