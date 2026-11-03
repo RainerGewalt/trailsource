@@ -19,7 +19,7 @@ source:
   security_mode: None
   auth: anonymous
   browse_roots:
-    - "ns=2;s=Plant"
+    - "nsu=urn:trailsource:sim:opcua;s=Plant"   # namespace URI form: survives a renumbered namespace
   max_depth: 16
   max_nodes: 2500
   subscription_interval_ms: 500
@@ -27,6 +27,7 @@ source:
   rebrowse_interval_s: ${SCENARIO_REBROWSE_S}
   session_backoff_s: ${SCENARIO_BACKOFF_S}
   request_timeout_s: 5
+  liveness_interval_s: ${SCENARIO_LIVENESS_S}
 
 mqtt:
   broker: tcp://127.0.0.1:${SCENARIO_MQTT_PORT}

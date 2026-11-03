@@ -1,18 +1,26 @@
 # Scenarios
 
-Four short demonstrations, one command each, that show what TrailSource
+Six short demonstrations, one command each, that show what TrailSource
 records when something happens at the source: the address space changes,
-the server goes away, the adapter restarts, or someone edits the journal.
-They run as local processes in about half a minute each. No Grafana, no
-hardware, no Docker.
+the server goes away or restarts changed, the connection goes silent, the
+adapter restarts, or someone edits the journal. They run as local processes
+in under a minute each. No Grafana, no hardware, no Docker.
 
 ```sh
 make scenario-inventory-change   # which address space was valid, and what changed
 make scenario-gap                # where the gap was, and why
 make scenario-restart            # a restart is a notice, not a break
 make scenario-tamper             # an edit is found, even a re-sealed one
-make scenarios                   # all four
+make scenario-server-restart     # the server comes back reordered and renumbered: same bindings
+make scenario-half-open          # the connection stays open but goes silent
+make scenarios                   # all six
 ```
+
+Every scenario ends with `trailsource verify`, `scripts/check_bindings.py`
+(every `entity_key` belongs to exactly one node and every node to exactly
+one key; a node is its NodeId with the namespace URI, so a renumbered
+namespace is the same node) and `trailsource report`. A failed check fails
+the run.
 
 Each run writes to `.demo/scenarios/<name>/` (git-ignored): the journal,
 the chain and inventory state, the logs of every process, and
@@ -142,6 +150,69 @@ and says so.
 Both tampered journals produce the same findings with the `trail-evidence`
 reference verifier (`trail-evidence verify <file>`).
 
+## server-restart
+
+The server goes away and comes back changed, the way a controller does
+after a firmware update or a project download:
+
+1. Simulator and adapter run; initial inventory.
+2. The simulator stops. `source.connection_lost`, reason `opc connection
+   state Closed`.
+3. A new simulator starts with three differences: its objects and
+   variables are created in reverse order, so it returns every reference
+   list reversed (`SIM_REVERSE_ORDER=1`); it registers another namespace
+   first, so the simulator's namespace moves from index 2 to index 3 with
+   the same URI (`SIM_EXTRA_NAMESPACE=1`); and it has a seventh barrel zone
+   (`SIM_BARREL_ZONES=7`).
+4. `source.connection_restored` with `down_ms`, a fresh browse, and one
+   inventory record whose diff the run checks to be exactly two added
+   variables, nothing removed, nothing changed.
+
+```
+  Address space generations (2)
+    gen 1   seq 2      ...  source.inventory_initial   28 nodes  sha256:f276db9dd6d9...
+    gen 2   seq 68     ...  source.node_added          30 nodes  sha256:f7e48ebc0b07...
+            added 2, removed 0, changed 0
+            + Plant.Line01.Extruder01.BarrelZone07.TempActualC (float64)
+            + Plant.Line01.Extruder01.BarrelZone07.TempSetpointC (float64)
+```
+
+```
+bindings: 30 entity_keys, 30 nodes, 28 read through more than one native NodeId (renumbered namespace)
+```
+
+The 28 variables that existed before are now read as `ns=3;s=...` instead
+of `ns=2;s=...` and keep their `entity_key`. The reversed reference order
+changes nothing. This works because the configured browse root is given in
+URI form (`nsu=urn:trailsource:sim:opcua;s=Plant`); with `ns=2;s=Plant`
+the root would point into the other namespace after the restart and the
+browse would fail with `BadNodeIdUnknown`, which is recorded but not what
+you want.
+
+## half-open
+
+The adapter reaches the simulator through `scripts/tcp_relay.py`. After the
+initial inventory the relay goes half-open (SIGUSR1): every socket stays
+open, the adapter's bytes are accepted and dropped, nothing comes back, no
+FIN, no RST. The OPC UA client state does not change in that situation, so
+the adapter asks the server for `ServerStatus.CurrentTime` every
+`liveness_interval_s` (2 s in this scenario, 10 s by default); the first
+read without an answer within `request_timeout_s` (5 s) ends the session:
+
+```
+  Gaps (1)
+    connection 2026-11-03T18:06:28.917Z .. 2026-11-03T18:06:37.392Z  8.475s
+               source.connection_lost server not answering: liveness read of ServerStatus.CurrentTime failed after 5s: context deadline exceeded
+               last value before the gap: 2026-11-03T18:06:21.910Z
+```
+
+The loss is recorded seven seconds after the last value (liveness interval
+plus request timeout). Reconnect attempts during the silence fail
+silently. When the relay forwards again (SIGUSR2, which also closes the
+silenced connections), the next attempt succeeds:
+`source.connection_restored` with `down_ms: 8475`. The chain continues
+without restart, the bindings are unchanged.
+
 ## The same scenarios against the container stack
 
 `make demo` runs the simulators, Mosquitto and the adapters in Docker and
@@ -155,6 +226,8 @@ the change that added the local scenarios.
 | gap | `docker compose stop opcua-sim`, wait, `docker compose start opcua-sim`. |
 | restart | `docker compose restart opcua-adapter`. |
 | tamper | Copy `.demo/journal/plant-a-ext-01-extruder-01-opcua.jsonl` and run `scripts/tamper.py` on the copy, as above. |
+| server-restart | `docker compose stop opcua-sim`, then start it with `SIM_REVERSE_ORDER=1 SIM_EXTRA_NAMESPACE=1 SIM_BARREL_ZONES=7` in its environment (`docker compose run` or an override file). |
+| half-open | Not with the stack as it is; it needs the relay between adapter and simulator. |
 
 Then `make verify` and
 `./bin/trailsource report .demo/journal/plant-a-ext-01-extruder-01-opcua.jsonl --html report.html`.

@@ -18,6 +18,13 @@ the browse path):
 
 After SIM_ADD_NODE_AFTER_S seconds a seventh barrel zone is added so the
 adapter's address-space diff has something to report.
+
+For restart tests (docs/SCENARIOS.md, server-restart):
+    SIM_REVERSE_ORDER=1     create the extruder's children in reverse order,
+                            so the server returns its references reversed
+    SIM_EXTRA_NAMESPACE=1   register another namespace first, so ours moves
+                            from index 2 to index 3 (same URI)
+    SIM_BARREL_ZONES=7      start with seven barrel zones
 """
 import asyncio
 import logging
@@ -39,6 +46,8 @@ SIM_ADD_NODE_AFTER_S = float(os.getenv("SIM_ADD_NODE_AFTER_S", "120"))
 LINE_ID = os.getenv("LINE_ID", "Line01")
 MACHINE_ID = os.getenv("MACHINE_ID", "Extruder01")
 ZONES = int(os.getenv("SIM_BARREL_ZONES", "6"))
+REVERSE_ORDER = os.getenv("SIM_REVERSE_ORDER", "") not in ("", "0")
+EXTRA_NAMESPACE = os.getenv("SIM_EXTRA_NAMESPACE", "") not in ("", "0")
 
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s [opcua-sim] %(message)s")
 logger = logging.getLogger(__name__)
@@ -171,33 +180,43 @@ async def build_address_space(server: Server, idx: int) -> Dict[str, Any]:
     extruder = await line.add_object(ua.NodeId(base, idx), MACHINE_ID)
     nodes: Dict[str, Any] = {}
 
-    for name, value, vtype, writable in [
-        ("MachineState", "STOPPED", ua.VariantType.String, False),
-        ("RecipeId", RECIPES[0], ua.VariantType.String, True),
-        ("OrderId", "ORD-2026-000112", ua.VariantType.String, True),
-        ("BatchId", "B-2026-11-02-01", ua.VariantType.String, True),
-        ("ScrewSpeedRpm", 0.0, ua.VariantType.Double, False),
-        ("ScrewTorquePct", 0.0, ua.VariantType.Double, False),
-        ("MeltPressureBar", 0.0, ua.VariantType.Double, False),
-        ("MeltTempC", 25.0, ua.VariantType.Double, False),
-        ("SourceTimestamp", datetime.now(timezone.utc), ua.VariantType.DateTime, False),
-    ]:
-        nodes[base + "." + name] = await add_var(extruder, idx, base + "." + name, value, vtype, writable)
+    async def scalars() -> None:
+        for name, value, vtype, writable in [
+            ("MachineState", "STOPPED", ua.VariantType.String, False),
+            ("RecipeId", RECIPES[0], ua.VariantType.String, True),
+            ("OrderId", "ORD-2026-000112", ua.VariantType.String, True),
+            ("BatchId", "B-2026-11-02-01", ua.VariantType.String, True),
+            ("ScrewSpeedRpm", 0.0, ua.VariantType.Double, False),
+            ("ScrewTorquePct", 0.0, ua.VariantType.Double, False),
+            ("MeltPressureBar", 0.0, ua.VariantType.Double, False),
+            ("MeltTempC", 25.0, ua.VariantType.Double, False),
+            ("SourceTimestamp", datetime.now(timezone.utc), ua.VariantType.DateTime, False),
+        ][:: -1 if REVERSE_ORDER else 1]:
+            nodes[base + "." + name] = await add_var(extruder, idx, base + "." + name, value, vtype, writable)
 
-    for zone in range(1, ZONES + 1):
-        await build_zone(extruder, idx, base, zone, ZONE_SETPOINTS[zone - 1], nodes)
+    async def zones() -> None:
+        order = range(1, ZONES + 1)
+        for zone in (reversed(order) if REVERSE_ORDER else order):
+            await build_zone(extruder, idx, base, zone, ZONE_SETPOINTS[zone - 1], nodes)
 
-    hauloff = await extruder.add_object(ua.NodeId(base + ".HaulOff", idx), "HaulOff")
-    nodes[base + ".HaulOff.SpeedMPerMin"] = await add_var(hauloff, idx, base + ".HaulOff.SpeedMPerMin", 0.0, ua.VariantType.Double)
-    nodes[base + ".HaulOff.TorquePct"] = await add_var(hauloff, idx, base + ".HaulOff.TorquePct", 0.0, ua.VariantType.Double)
+    async def hauloff() -> None:
+        obj = await extruder.add_object(ua.NodeId(base + ".HaulOff", idx), "HaulOff")
+        nodes[base + ".HaulOff.SpeedMPerMin"] = await add_var(obj, idx, base + ".HaulOff.SpeedMPerMin", 0.0, ua.VariantType.Double)
+        nodes[base + ".HaulOff.TorquePct"] = await add_var(obj, idx, base + ".HaulOff.TorquePct", 0.0, ua.VariantType.Double)
 
-    saw = await extruder.add_object(ua.NodeId(base + ".Saw", idx), "Saw")
-    nodes[base + ".Saw.PieceCounter"] = await add_var(saw, idx, base + ".Saw.PieceCounter", 0, ua.VariantType.UInt32)
-    nodes[base + ".Saw.CutLengthMm"] = await add_var(saw, idx, base + ".Saw.CutLengthMm", 6000.0, ua.VariantType.Double, writable=True)
+    async def saw() -> None:
+        obj = await extruder.add_object(ua.NodeId(base + ".Saw", idx), "Saw")
+        nodes[base + ".Saw.PieceCounter"] = await add_var(obj, idx, base + ".Saw.PieceCounter", 0, ua.VariantType.UInt32)
+        nodes[base + ".Saw.CutLengthMm"] = await add_var(obj, idx, base + ".Saw.CutLengthMm", 6000.0, ua.VariantType.Double, writable=True)
 
-    alarms = await extruder.add_object(ua.NodeId(base + ".Alarms", idx), "Alarms")
-    nodes[base + ".Alarms.AlarmWord1"] = await add_var(alarms, idx, base + ".Alarms.AlarmWord1", 0, ua.VariantType.UInt32)
-    nodes[base + ".Alarms.AlarmWord2"] = await add_var(alarms, idx, base + ".Alarms.AlarmWord2", 0, ua.VariantType.UInt32)
+    async def alarms() -> None:
+        obj = await extruder.add_object(ua.NodeId(base + ".Alarms", idx), "Alarms")
+        nodes[base + ".Alarms.AlarmWord1"] = await add_var(obj, idx, base + ".Alarms.AlarmWord1", 0, ua.VariantType.UInt32)
+        nodes[base + ".Alarms.AlarmWord2"] = await add_var(obj, idx, base + ".Alarms.AlarmWord2", 0, ua.VariantType.UInt32)
+
+    steps = [scalars, zones, hauloff, saw, alarms]
+    for step in (reversed(steps) if REVERSE_ORDER else steps):
+        await step()
 
     nodes["_extruder"] = extruder
     nodes["_base"] = base
@@ -250,6 +269,8 @@ async def main() -> None:
     server.set_server_name(OPC_SERVER_NAME)
     server.set_application_uri(OPC_NAMESPACE_URI)
     server.set_security_policy([ua.SecurityPolicyType.NoSecurity])  # lab only
+    if EXTRA_NAMESPACE:
+        await server.register_namespace("urn:trailsource:sim:extra")
     idx = await server.register_namespace(OPC_NAMESPACE_URI)
     nodes = await build_address_space(server, idx)
     sim = ExtrusionSimulation()

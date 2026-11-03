@@ -21,7 +21,7 @@ source:
   username: "${TRAILSOURCE_OPCUA_USERNAME}"
   password: "${TRAILSOURCE_OPCUA_PASSWORD}"
   browse_roots:
-    - "ns=2;s=Plant"             # browse below the plant object only
+    - "nsu=urn:trailsource:sim:opcua;s=Plant"   # below the plant object; URI form survives a renumbered namespace
   max_depth: 16
   max_nodes: 2500
   subscription_interval_ms: 500

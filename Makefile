@@ -7,7 +7,8 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.1.
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
 .PHONY: help build test py-test fmt vet ci compose-config demo demo-down logs verify clean \
-	scenarios scenario-inventory-change scenario-gap scenario-restart scenario-tamper
+	scenarios scenario-inventory-change scenario-gap scenario-restart scenario-tamper \
+	scenario-server-restart scenario-half-open
 
 help:
 	@printf '%s\n' 'TrailSource:' \
@@ -24,6 +25,8 @@ help:
 	  '  make scenario-gap                the server goes away and comes back: a gap with duration' \
 	  '  make scenario-restart            the adapter restarts: chain_restart with anchor, a notice' \
 	  '  make scenario-tamper             one value is edited: hash_mismatch, then chain_break' \
+	  '  make scenario-server-restart     the server restarts reordered and renumbered: same bindings' \
+	  '  make scenario-half-open          the connection stays open but goes silent: lost, then restored' \
 	  '  make scenarios                   all four, one after another'
 
 build:
@@ -45,7 +48,7 @@ vet:
 py-compile:
 	$(PYTHON) -m py_compile adapters/modbus/main.py adapters/ethernetip/main.py \
 	  adapters/pylib/trailsource_adapter/runtime.py sim/opcua/main.py sim/modbus/main.py sim/ethernetip/main.py \
-	  scripts/tamper.py scripts/tcp_relay.py
+	  scripts/tamper.py scripts/tcp_relay.py scripts/check_bindings.py
 
 compose-config:
 	$(COMPOSE) config >/dev/null
@@ -67,10 +70,10 @@ verify: build
 	@ls .demo/journal/*.jsonl >/dev/null 2>&1 || { echo 'no journals in .demo/journal (run make demo first)'; exit 1; }
 	./bin/trailsource verify .demo/journal/*.jsonl
 
-scenario-inventory-change scenario-gap scenario-restart scenario-tamper: scenario-%: build
+scenario-inventory-change scenario-gap scenario-restart scenario-tamper scenario-server-restart scenario-half-open: scenario-%: build
 	scripts/scenario.sh $*
 
-scenarios: scenario-inventory-change scenario-gap scenario-restart scenario-tamper
+scenarios: scenario-inventory-change scenario-gap scenario-restart scenario-tamper scenario-server-restart scenario-half-open
 
 clean:
 	rm -rf bin

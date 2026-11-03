@@ -3,6 +3,7 @@
 # processes, no Docker. See docs/SCENARIOS.md.
 #
 #   scripts/scenario.sh inventory-change | gap | restart | tamper
+#                       server-restart | half-open
 #
 # Needs: ./bin/trailsource (make build), mosquitto on PATH, a Python with
 # asyncua for the simulator (pip install -r sim/opcua/requirements.txt).
@@ -10,7 +11,8 @@
 #
 # Environment:
 #   SCENARIO_MQTT_PORT   local Mosquitto port            (default 18830)
-#   SCENARIO_OPC_PORT    simulator port                  (default 48400)
+#   SCENARIO_OPC_PORT    port the adapter connects to    (default 48400; the
+#                        simulator's, or the relay's in half-open)
 #   SCENARIO_GAP_S       seconds the simulator stays off (default 8)
 #   SIM_PYTHON           Python interpreter with asyncua (auto-detected)
 #   SCENARIO_BROKER      "external" to use a broker already on SCENARIO_MQTT_PORT
@@ -20,8 +22,8 @@ cd "$(dirname "$0")/.."
 ROOT=$PWD
 NAME=${1:-}
 case "$NAME" in
-  inventory-change|gap|restart|tamper) ;;
-  *) echo "usage: $0 inventory-change|gap|restart|tamper" >&2; exit 2 ;;
+  inventory-change|gap|restart|tamper|server-restart|half-open) ;;
+  *) echo "usage: $0 inventory-change|gap|restart|tamper|server-restart|half-open" >&2; exit 2 ;;
 esac
 
 export SCENARIO_MQTT_PORT=${SCENARIO_MQTT_PORT:-18830}
@@ -29,6 +31,10 @@ export SCENARIO_OPC_PORT=${SCENARIO_OPC_PORT:-48400}
 export SCENARIO_DIR=$ROOT/.demo/scenarios/$NAME
 export SCENARIO_REBROWSE_S=${SCENARIO_REBROWSE_S:-30}
 export SCENARIO_BACKOFF_S=${SCENARIO_BACKOFF_S:-2}
+export SCENARIO_LIVENESS_S=${SCENARIO_LIVENESS_S:-10}
+SIM_PORT=$SCENARIO_OPC_PORT
+[ "$NAME" = half-open ] && SIM_PORT=$((SCENARIO_OPC_PORT + 1))
+EXPECT_DIFF=
 GAP_S=${SCENARIO_GAP_S:-8}
 BIN=$ROOT/bin/trailsource
 CONFIG=configs/scenario/opcua-local.yaml
@@ -52,7 +58,9 @@ fi
 [ -n "${SIM_PYTHON:-}" ] || die "no Python with asyncua found; pip install -r sim/opcua/requirements.txt or set SIM_PYTHON"
 port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 if [ "${SCENARIO_BROKER:-}" != "external" ] && port_busy "$SCENARIO_MQTT_PORT"; then die "port $SCENARIO_MQTT_PORT is in use (set SCENARIO_MQTT_PORT)"; fi
-if port_busy "$SCENARIO_OPC_PORT"; then die "port $SCENARIO_OPC_PORT is in use (set SCENARIO_OPC_PORT)"; fi
+for p in "$SCENARIO_OPC_PORT" "$SIM_PORT"; do
+  if port_busy "$p"; then die "port $p is in use (set SCENARIO_OPC_PORT)"; fi
+done
 
 rm -rf "$SCENARIO_DIR"
 mkdir -p "$SCENARIO_DIR/state" "$SCENARIO_DIR/journal" "$SCENARIO_DIR/logs"
@@ -67,7 +75,8 @@ stop_pid() {
   kill -KILL "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
 }
-cleanup() { stop_pid "$ADAPTER_PID"; stop_pid "$SIM_PID"; stop_pid "$BROKER_PID"; }
+RELAY_PID=
+cleanup() { stop_pid "$ADAPTER_PID"; stop_pid "$RELAY_PID"; stop_pid "$SIM_PID"; stop_pid "$BROKER_PID"; }
 trap cleanup EXIT
 
 start_broker() {
@@ -79,11 +88,18 @@ start_broker() {
   wait_port "$SCENARIO_MQTT_PORT" mosquitto
 }
 start_sim() {
-  # $1: seconds until BarrelZone07 is added (0 = never)
-  OPC_ENDPOINT="opc.tcp://127.0.0.1:$SCENARIO_OPC_PORT/trailsource" SIM_ADD_NODE_AFTER_S="$1" \
+  # $1: seconds until BarrelZone07 is added (0 = never); further arguments
+  # are VAR=value settings for the simulator (see sim/opcua/main.py)
+  local after=$1; shift
+  env "$@" OPC_ENDPOINT="opc.tcp://127.0.0.1:$SIM_PORT/trailsource" SIM_ADD_NODE_AFTER_S="$after" \
     "$SIM_PYTHON" sim/opcua/main.py >>"$SCENARIO_DIR/logs/sim.log" 2>&1 &
   SIM_PID=$!
-  wait_port "$SCENARIO_OPC_PORT" simulator
+  wait_port "$SIM_PORT" simulator
+}
+start_relay() {
+  "$SIM_PYTHON" scripts/tcp_relay.py "$SCENARIO_OPC_PORT" 127.0.0.1 "$SIM_PORT" >>"$SCENARIO_DIR/logs/relay.log" 2>&1 &
+  RELAY_PID=$!
+  wait_port "$SCENARIO_OPC_PORT" relay
 }
 start_adapter() {
   "$BIN" run --config "$CONFIG" >>"$SCENARIO_DIR/logs/adapter.log" 2>&1 &
@@ -106,8 +122,13 @@ wait_for() {
 finish() {
   stop_pid "$ADAPTER_PID"; ADAPTER_PID=
   stop_pid "$SIM_PID"; SIM_PID=
+  stop_pid "$RELAY_PID"; RELAY_PID=
   say "trailsource verify"
   set +e; "$BIN" verify "$JOURNAL"; local rc=$?; set -e
+  say "bindings (scripts/check_bindings.py)"
+  local diffarg=()
+  [ -n "$EXPECT_DIFF" ] && diffarg=(--expect-diff "$EXPECT_DIFF")
+  "$SIM_PYTHON" scripts/check_bindings.py "$JOURNAL" "${diffarg[@]}" || rc=1
   say "trailsource report"
   "$BIN" report "$JOURNAL" --html "$SCENARIO_DIR/report.html"
   echo
@@ -157,6 +178,41 @@ restart)
   sleep 3
   start_adapter
   wait_for '"chain_restart":true' 2 30 "second chain_restart record (anchor = last chain_hash before the stop)"
+  sleep 4
+  finish
+  ;;
+server-restart)
+  start_sim 0
+  start_adapter
+  wait_for '"reason_code":"source.inventory_initial"' 1 30 "initial inventory"
+  sleep 4
+  say "stopping the server"
+  stop_pid "$SIM_PID"; SIM_PID=
+  wait_for '"reason_code":"source.connection_lost"' 1 20 "source.connection_lost"
+  sleep 3
+  say "starting a changed server: references reversed, namespace moved from index 2 to 3, a seventh barrel zone"
+  start_sim 0 SIM_REVERSE_ORDER=1 SIM_EXTRA_NAMESPACE=1 SIM_BARREL_ZONES=7
+  wait_for '"reason_code":"source.connection_restored"' 1 30 "source.connection_restored"
+  wait_for '"reason_code":"source.node_added"' 1 30 "source.node_added: only the new zone, nothing for the reorder or the new index"
+  sleep 4
+  EXPECT_DIFF=added=2,removed=0,changed=0
+  finish
+  ;;
+half-open)
+  export SCENARIO_LIVENESS_S=2
+  start_sim 0
+  start_relay
+  start_adapter
+  wait_for '"reason_code":"source.inventory_initial"' 1 30 "initial inventory"
+  sleep 4
+  say "relay goes half-open: sockets stay open, nothing is forwarded"
+  kill -USR1 "$RELAY_PID"
+  wait_for '"reason_code":"source.connection_lost"' 1 30 "source.connection_lost (liveness read unanswered)"
+  grep -q 'server not answering' "$JOURNAL" || die "the lost record does not name the unanswered liveness read"
+  sleep "$GAP_S"
+  say "relay forwards again"
+  kill -USR2 "$RELAY_PID"
+  wait_for '"reason_code":"source.connection_restored"' 1 40 "source.connection_restored"
   sleep 4
   finish
   ;;
