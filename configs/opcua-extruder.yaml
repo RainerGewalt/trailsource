@@ -26,6 +26,7 @@ source:
   auth: anonymous                # anonymous | username
   username: "${TRAILSOURCE_OPCUA_USERNAME}"
   password: "${TRAILSOURCE_OPCUA_PASSWORD}"
+  # password_file: /etc/trailsource/opcua.password   # instead of password; mode 0600 or stricter
   browse_roots:
     - "nsu=urn:trailsource:sim:opcua;s=Plant"   # below the plant object; URI form survives a renumbered namespace
   max_depth: 16

@@ -20,7 +20,9 @@ source:
   security_policy: ${INTEROP_SECURITY_POLICY}
   security_mode: ${INTEROP_SECURITY_MODE}
   pki_dir: ${INTEROP_PKI}         # own/ client certificate, trusted/ server certificates, rejected/
-  auth: anonymous
+  auth: ${INTEROP_AUTH}            # anonymous (default when empty) or username
+  username: "${INTEROP_USERNAME}"  # Milo demo accounts: docs/INTEROP.md
+  password_file: ${INTEROP_PASSWORD_FILE}   # mode 0600; empty: no password
   browse_roots:
     - "ns=2;s=Demo.Dynamic"
     - "ns=2;s=CTT.Static.AllProfiles.Array"

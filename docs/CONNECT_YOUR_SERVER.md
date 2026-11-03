@@ -159,10 +159,23 @@ source:
   password: "${TRAILSOURCE_OPCUA_PASSWORD}"
 ```
 
-Values come from the environment. `username` and `password` are masked
-before `config_version` is computed, so rotating them does not change the
-hash and the hash never contains them. Use an account whose role grants
-read and browse only. The access levels the session saw (`access_level`,
+Values come from the environment. Instead of `password`, the password
+can be read from a file that only its owner may read:
+
+```yaml
+source:
+  auth: username
+  username: "${TRAILSOURCE_OPCUA_USERNAME}"
+  password_file: /etc/trailsource/opcua.password   # chmod 600; anything wider is refused
+```
+
+`username` and `password` are masked before `config_version` is computed
+(only the path of a `password_file` is part of the configuration), so
+rotating them does not change the hash and the hash never contains them.
+Neither appears in records or logs; records carry only `auth: username`.
+With security mode `None` the password is protected only by the server's
+user token policy (usually encrypted with its certificate); prefer
+`SignAndEncrypt`. Use an account whose role grants read and browse only. The access levels the session saw (`access_level`,
 `user_access_level`, `writable`, `user_writable`) are recorded for every
 node, so a reviewer can later see what this account could have written,
 even though TrailSource did not.

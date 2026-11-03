@@ -51,6 +51,7 @@ type Config struct {
 		Auth                   string   `yaml:"auth"`            // anonymous | username
 		Username               string   `yaml:"username"`
 		Password               string   `yaml:"password"`
+		PasswordFile           string   `yaml:"password_file"` // file with the password, mode 0600; instead of password
 		CertificateFile        string   `yaml:"certificate_file"`
 		PrivateKeyFile         string   `yaml:"private_key_file"`
 		BrowseRoots            []string `yaml:"browse_roots"`
@@ -130,7 +131,32 @@ func Load(path string) (*Config, []string, error) {
 		return nil, missing, fmt.Errorf("%s: %w", path, err)
 	}
 	cfg.Path = path
+	if cfg.Source.PasswordFile != "" {
+		pw, err := ReadSecretFile(cfg.Source.PasswordFile)
+		if err != nil {
+			return nil, missing, fmt.Errorf("%s: source.password_file: %w", path, err)
+		}
+		cfg.Source.Password = pw
+	}
 	return cfg, missing, nil
+}
+
+// ReadSecretFile reads a secret from a file that only its owner may read
+// (mode 0600 or stricter). A trailing newline is removed. The secret never
+// enters config_version: only the file's path is part of the configuration.
+func ReadSecretFile(path string) (string, error) {
+	st, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if st.Mode().Perm()&0o077 != 0 {
+		return "", fmt.Errorf("%s is readable by group or others (mode %04o); chmod 600 it", path, st.Mode().Perm())
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(raw), "\r\n"), nil
 }
 
 // Parse parses YAML bytes (already env-expanded), applies defaults, validates
@@ -364,6 +390,7 @@ func (c *Config) SessionBackoff() time.Duration {
 func (c *Config) RequestTimeout() time.Duration {
 	return time.Duration(c.Source.RequestTimeoutS) * time.Second
 }
+
 func (c *Config) LivenessInterval() time.Duration {
 	return time.Duration(c.Source.LivenessIntervalS) * time.Second
 }
