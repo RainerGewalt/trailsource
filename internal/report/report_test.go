@@ -262,3 +262,22 @@ func TestReportEndOfJournal(t *testing.T) {
 		t.Fatalf("outage at the end must be an open gap: %+v %s %s", s.Gaps, s.LastEvent, s.LastSeen)
 	}
 }
+
+func TestReportNamesRecurringAddressSpace(t *testing.T) {
+	raw := loadFixture(t)
+	lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
+	// Re-use the fingerprint of generation 1 for generation 2 (verification
+	// is irrelevant here; only the summary is checked).
+	gen2 := bytes.Replace(lines[8], []byte(`"fingerprint":"`+evidence.Sum([]byte("gen2"))+`"`), []byte(`"fingerprint":"`+evidence.Sum([]byte("gen1"))+`"`), 1)
+	if bytes.Equal(gen2, lines[8]) {
+		t.Fatal("fixture line 9 is not the second inventory record")
+	}
+	lines[8] = gen2
+	r, err := Build("recurring", bytes.Join(lines, []byte("\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g := r.Streams[0].Generations; g[1].SameAs != 1 || g[0].SameAs != 0 {
+		t.Fatalf("recurring fingerprint not named: %+v", g)
+	}
+}

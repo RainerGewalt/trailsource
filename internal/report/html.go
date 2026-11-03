@@ -91,6 +91,7 @@ ul.diff li{word-break:break-all}
 <p><strong>Generation {{.Generation}}</strong> <span class="muted">seq {{.Seq}}, {{.RecordedAt}}</span><br>
 <code>{{.ReasonCode}}</code>, {{.NodeCount}} nodes, fingerprint <code>{{short .Fingerprint}}</code>
 {{if ne .ReasonCode "source.inventory.initial"}}<br>added {{len .Added}}, removed {{len .Removed}}, changed {{len .Changed}}{{end}}
+{{if .SameAs}}<br>Same fingerprint as generation {{.SameAs}}.{{end}}
 {{if .Truncated}}<br><span class="notice">Truncated at max_nodes: the inventory covers a prefix of the address space.</span>{{end}}</p>
 {{if or .Added .Removed .Changed}}<ul class="diff mono">
 {{range limit .Added}}<li>+ {{.}}</li>{{end}}{{with more .Added}}<li class="muted">+ {{.}} more</li>{{end}}

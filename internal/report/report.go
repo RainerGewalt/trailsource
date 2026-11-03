@@ -70,6 +70,7 @@ type Generation struct {
 	Fingerprint         string   `json:"fingerprint"`
 	PreviousFingerprint string   `json:"previous_fingerprint,omitempty"`
 	Truncated           bool     `json:"truncated,omitempty"`
+	SameAs              int64    `json:"same_as,omitempty"` // earlier generation with the same fingerprint (paths may still differ)
 	Added               []string `json:"added"`
 	Removed             []string `json:"removed"`
 	Changed             []string `json:"changed"`
@@ -329,6 +330,12 @@ func summarise(sid string, entries []entry) Stream {
 			}
 		case "source.inventory.changed":
 			g := generation(e)
+			for _, earlier := range s.Generations {
+				if earlier.Fingerprint == g.Fingerprint && g.Fingerprint != "" {
+					g.SameAs = earlier.Generation
+					break
+				}
+			}
 			s.Generations = append(s.Generations, g)
 			s.LastEvent, s.LastSeen = g.ReasonCode, seenAt(e)
 		}

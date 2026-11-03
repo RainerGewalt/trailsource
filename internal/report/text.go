@@ -61,6 +61,9 @@ func (r *Report) WriteText(w io.Writer) error {
 			if g.ReasonCode != "source.inventory.initial" {
 				fmt.Fprintf(&b, "            added %d, removed %d, changed %d\n", len(g.Added), len(g.Removed), len(g.Changed))
 			}
+			if g.SameAs != 0 {
+				fmt.Fprintf(&b, "            same fingerprint as generation %d\n", g.SameAs)
+			}
 			if g.Truncated {
 				fmt.Fprintf(&b, "            truncated at max_nodes: the inventory covers a prefix of the address space\n")
 			}
