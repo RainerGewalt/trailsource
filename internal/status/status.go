@@ -24,6 +24,7 @@ const (
 	ConnectionLost        = "source.connection_lost"        // an open session ended with an error
 	ConnectionFailed      = "source.connection_failed"      // a connect attempt failed (once per outage)
 	ConnectionClosed      = "source.connection_closed"      // the adapter closed the session on shutdown
+	CertificateRejected   = "source.certificate_rejected"   // the server certificate failed the trust list or the pin
 
 	InventoryInitial = "source.inventory_initial" // first browse, no persisted snapshot
 	NodeAdded        = "source.node_added"        // nodes appeared
@@ -40,7 +41,7 @@ const (
 
 // Codes lists every reason code TrailSource writes, in documentation order.
 var Codes = []string{
-	ConnectionEstablished, ConnectionRestored, ConnectionLost, ConnectionFailed, ConnectionClosed,
+	ConnectionEstablished, ConnectionRestored, ConnectionLost, ConnectionFailed, ConnectionClosed, CertificateRejected,
 	InventoryInitial, NodeAdded, NodeRemoved, NodeChanged,
 	QualityUncertain, QualityBad,
 	Restart, StateLost, WillPublished,

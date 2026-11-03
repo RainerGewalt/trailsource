@@ -7,6 +7,7 @@ package opcua
 import (
 	"context"
 	"crypto/sha1" //nolint:gosec // OPC UA thumbprints
+	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -30,6 +31,7 @@ import (
 	"github.com/RainerGewalt/trailsource/internal/mapping"
 	"github.com/RainerGewalt/trailsource/internal/mqttpub"
 	"github.com/RainerGewalt/trailsource/internal/status"
+	"github.com/RainerGewalt/trailsource/internal/trust"
 )
 
 // Event types emitted by this adapter (see internal/status).
@@ -64,6 +66,7 @@ type Adapter struct {
 	everConnected bool      // a session was established in this process
 	outage        bool      // a lost or failed record was emitted and no session since
 	outageSince   time.Time // when that record was emitted
+	lastRejected  string    // thumbprint of the last rejected server certificate
 }
 
 type boundNode struct {
@@ -165,7 +168,19 @@ func Run(ctx context.Context, cfg *config.Config, version string) error {
 		if err != nil && ctx.Err() == nil {
 			log.Printf("opc session ended: %v", err)
 			a.setError(err)
-			if !connected && !a.outage {
+			var rej *trust.Rejection
+			switch {
+			case !connected && errors.As(err, &rej):
+				// A rejected server certificate is its own record, once per
+				// outage and certificate: an administrator has to act.
+				if !a.outage || rej.Thumbprint != a.lastRejected {
+					if !a.outage {
+						a.outage, a.outageSince = true, time.Now()
+					}
+					a.lastRejected = rej.Thumbprint
+					a.emitConnection("disconnected", status.CertificateRejected, err.Error(), a.configuredSession(), rejectionPayload(rej))
+				}
+			case !connected && !a.outage:
 				// Record the first failed attempt of an outage (or of a start
 				// against an unreachable server) once; retries stay silent.
 				a.outage, a.outageSince = true, time.Now()
@@ -306,27 +321,35 @@ func dial(ctx context.Context, cfg *config.Config) (*opcua.Client, sessionInfo, 
 	if src.Auth == "username" {
 		tokenType = ua.UserTokenTypeUserName
 	}
+	secured := mode != ua.MessageSecurityModeNone
 	if err == nil {
 		ep, selErr := opcua.SelectEndpoint(endpoints, policyURI, mode)
 		if selErr == nil && ep != nil {
-			if mode != ua.MessageSecurityModeNone && len(ep.ServerCertificate) > 0 {
-				info.ServerThumbprint = Thumbprint(ep.ServerCertificate)
+			if ep.Server != nil {
+				info.ServerURI = ep.Server.ApplicationURI
+			}
+			if secured {
+				// Only a server certificate that passes the trust list (and
+				// the pin, when one is set) is used; nothing is accepted
+				// silently. A rejected certificate lands in <pki>/rejected.
+				leaf, err := (trust.Store{Dir: src.PKIDir}).Check(ep.ServerCertificate, info.ServerURI)
+				if err != nil {
+					return nil, info, err
+				}
+				info.ServerThumbprint = Thumbprint(leaf.Raw)
 			}
 			if err := checkPinned(src.ServerThumbprint, info.ServerThumbprint); err != nil {
 				return nil, info, err
 			}
 			opts = append(opts, opcua.SecurityFromEndpoint(ep, tokenType))
-			if ep.Server != nil {
-				info.ServerURI = ep.Server.ApplicationURI
-			}
-		} else if src.ServerThumbprint != "" {
-			return nil, info, fmt.Errorf("server_thumbprint is set but the server did not offer %s/%s, refusing to connect", src.SecurityPolicy, src.SecurityMode)
+		} else if secured || src.ServerThumbprint != "" {
+			return nil, info, fmt.Errorf("the server does not offer %s/%s; without its endpoint description the server certificate cannot be checked, refusing to connect", src.SecurityPolicy, src.SecurityMode)
 		} else {
 			log.Printf("opc: endpoint %s/%s not offered by server, using explicit settings", src.SecurityPolicy, src.SecurityMode)
 			opts = append(opts, opcua.SecurityPolicy(policyURI), opcua.SecurityMode(mode))
 		}
-	} else if src.ServerThumbprint != "" {
-		return nil, info, fmt.Errorf("server_thumbprint is set but the endpoint list is unavailable (%v), refusing to connect", err)
+	} else if secured || src.ServerThumbprint != "" {
+		return nil, info, fmt.Errorf("endpoint list unavailable (%v); the server certificate cannot be checked, refusing to connect", err)
 	} else {
 		log.Printf("opc: GetEndpoints failed (%v), using explicit settings", err)
 		opts = append(opts, opcua.SecurityPolicy(policyURI), opcua.SecurityMode(mode))
@@ -921,9 +944,13 @@ func nullIfEmpty(s string) any {
 	return s
 }
 
-// Thumbprint returns the SHA-1 thumbprint of a DER certificate as lowercase
-// hex, the form OPC UA servers and tools display.
+// Thumbprint returns the SHA-1 thumbprint of a certificate as lowercase hex,
+// the form OPC UA servers and tools display. When der is a chain (leaf
+// first, as servers may send it), the thumbprint is the leaf's.
 func Thumbprint(der []byte) string {
+	if certs, err := x509.ParseCertificates(der); err == nil && len(certs) > 0 {
+		der = certs[0].Raw
+	}
 	sum := sha1.Sum(der) //nolint:gosec // OPC UA thumbprints are SHA-1 by specification
 	return hex.EncodeToString(sum[:])
 }
@@ -943,7 +970,8 @@ func checkPinned(pinned, got string) error {
 		return errors.New("server_thumbprint is set but the session is not secured (security_mode None), refusing to connect")
 	}
 	if norm(pinned) != norm(got) {
-		return fmt.Errorf("server certificate thumbprint %s does not match server_thumbprint %s, refusing to connect", got, norm(pinned))
+		return &trust.Rejection{Check: trust.CheckPinMismatch, Thumbprint: got,
+			Detail: fmt.Sprintf("thumbprint does not match server_thumbprint %s", norm(pinned))}
 	}
 	return nil
 }
@@ -975,4 +1003,21 @@ func inventoryItems(sourceID string, nodes []VariableNode) []inventory.Item {
 		nodes[i].Item.EntityKey = items[i].EntityKey
 	}
 	return items
+}
+
+// rejectionPayload is what a certificate_rejected record says about the
+// certificate, so the reviewer can find it in <pki>/rejected.
+func rejectionPayload(r *trust.Rejection) map[string]any {
+	out := map[string]any{"check": r.Check, "certificate_thumbprint": r.Thumbprint}
+	if r.Subject != "" {
+		out["certificate_subject"] = r.Subject
+	}
+	if !r.NotAfter.IsZero() {
+		out["certificate_not_before"] = evidence.FormatTime(r.NotBefore)
+		out["certificate_not_after"] = evidence.FormatTime(r.NotAfter)
+	}
+	if r.RejectedFile != "" {
+		out["rejected_file"] = r.RejectedFile
+	}
+	return out
 }

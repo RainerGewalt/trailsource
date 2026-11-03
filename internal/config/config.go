@@ -66,6 +66,7 @@ type Config struct {
 		LivenessIntervalS      int      `yaml:"liveness_interval_s"` // read ServerStatus.CurrentTime this often; detects half-open connections
 		ApplicationURI         string   `yaml:"application_uri"`     // without certificate_file; with one, the certificate's URI is used
 		ServerThumbprint       string   `yaml:"server_thumbprint"`   // SHA-1 of the server certificate; when set, any other certificate is refused
+		PKIDir                 string   `yaml:"pki_dir"`             // trust list and own certificate (OPC UA layout); default "pki"
 	} `yaml:"source"`
 
 	MQTT struct {
@@ -263,6 +264,18 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Source.ApplicationURI == "" {
 		c.Source.ApplicationURI = "urn:trailsource:client"
+	}
+	if c.Source.PKIDir == "" {
+		c.Source.PKIDir = "pki"
+	}
+	if c.Source.SecurityMode != "None" {
+		// trailsource gen-cert --pki writes the client certificate here.
+		if c.Source.CertificateFile == "" {
+			c.Source.CertificateFile = filepath.Join(c.Source.PKIDir, "own", "certs", "client.der")
+		}
+		if c.Source.PrivateKeyFile == "" {
+			c.Source.PrivateKeyFile = filepath.Join(c.Source.PKIDir, "own", "private", "client.key.pem")
+		}
 	}
 	if c.Source.ID == "" {
 		c.Source.ID = strings.Trim(strings.Join([]string{tok(c.Site), tok(c.Line), tok(c.Device), "opcua"}, "-"), "-")

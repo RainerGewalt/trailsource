@@ -33,14 +33,37 @@ marked as preview.
   `chain_restart` and the reason code the catalog assigns to it.
 - `down_ms` on `source.connection_restored` records.
 - Inventory records carry `truncated` and `browse_limits`.
-- Settings `sampling_interval_ms`, `browse_timeout_s`, `application_uri`
-  and `server_thumbprint` (pin the server certificate; the session's
-  thumbprint is recorded).
+- Settings `sampling_interval_ms`, `browse_timeout_s`, `application_uri`,
+  `liveness_interval_s` and `server_thumbprint` (pin the server
+  certificate; the session's thumbprint is recorded).
+- Server certificate trust list in the OPC UA layout (`pki_dir`:
+  `trusted/certs`, `trusted/crl`, `issuers/`, `rejected/`): validity,
+  ApplicationURI, direct trust or a chain to a trusted CA with current
+  CRLs. With a secured endpoint nothing else is accepted; a refused
+  certificate is copied to `rejected/` and recorded as
+  `source.certificate_rejected`. `gen-cert --pki` creates the layout and
+  writes the client certificate to `own/`.
+- Liveness read of `ServerStatus.CurrentTime` every `liveness_interval_s`:
+  a half-open connection ends as `source.connection_lost`.
+- Browse roots in namespace-URI form (`nsu=<uri>;<id>`).
+- Scenarios `server-restart` and `half-open`; every scenario checks that
+  no `entity_key` belongs to two nodes (`scripts/check_bindings.py`).
 - Interoperability record against the Eclipse Milo demo server and the
   umati Sample-Server (`docs/INTEROP.md`, `configs/interop/`,
   `scripts/tcp_relay.py`).
 
 ### Changed
+
+- Fingerprint version 2: sorted lines of normalized browse path (root
+  NodeId and BrowseNames with namespace URIs), NodeId in URI form,
+  NodeClass and DataType. A rename or move changes it even with reused
+  NodeIds; a reorder or a renumbered namespace does not. The diff is keyed
+  by NodeId in URI form; data types outside namespace 0 are recorded in URI
+  form. The first browse after the upgrade writes one `rebaseline` record.
+- The browse sorts children by BrowseName and NodeId, so `entity_key` and
+  the content of a truncated inventory do not depend on the server's
+  reference order; colliding keys get an order-independent suffix.
+- `gen-cert --out` is now `gen-cert --pki`.
 
 - `seq` is written as a canonical decimal string (`"0"`, `"1"`, ...) in Go
   and Python; `testdata/vectors.json` is regenerated. `trailsource verify`

@@ -43,6 +43,7 @@ joined by underscores). The severity is the catalog's.
 | `source.connection_lost` | `disconnected` | error | An open session ended with an error. `payload.reason` has the error text. |
 | `source.connection_failed` | `disconnected` | error | A connect attempt failed. Recorded once per outage: on a start against an unreachable server, never while a `lost` record already opened the outage. Retries stay silent until a session is restored. |
 | `source.connection_closed` | `disconnected` | info | The adapter closed the session because it is stopping. |
+| `source.certificate_rejected` | `disconnected` | error | The server certificate failed the trust list or the pin (`payload.check`: `untrusted`, `expired`, `not_yet_valid`, `revoked`, `revocation_unknown`, `uri_mismatch`, `pin_mismatch`, `unparsable`, `no_certificate`). `payload.certificate_thumbprint` and `payload.rejected_file` name the certificate, which was copied to `<pki>/rejected/`. Recorded once per outage and certificate; nothing is read until an administrator moves the certificate to `<pki>/trusted/certs`. |
 
 ### On `source.inventory.changed`
 
@@ -129,9 +130,9 @@ verifier does not look at reason codes at all.
 | `common.mqtt.will` | `common.will_published` |
 
 `source.connection_established`, `source.connection_failed`,
-`source.connection_closed`, `source.node_changed` and
-`common.will_published` were added to the catalog for TrailSource; the
-other codes were already there.
+`source.connection_closed`, `source.certificate_rejected`,
+`source.node_changed` and `common.will_published` were added to the
+catalog for TrailSource; the other codes were already there.
 
 ## Preview adapters
 

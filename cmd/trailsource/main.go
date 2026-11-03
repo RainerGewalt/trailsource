@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/RainerGewalt/trailsource/internal/mapping"
 	"github.com/RainerGewalt/trailsource/internal/opcua"
 	"github.com/RainerGewalt/trailsource/internal/report"
+	"github.com/RainerGewalt/trailsource/internal/trust"
 )
 
 // version is set at build time via -ldflags "-X main.version=...".
@@ -37,7 +39,7 @@ Usage:
   trailsource endpoints <opc.tcp://host:port/path>    list the server's endpoints and security modes
   trailsource browse --config <file> [--json] [--mapping-out <file>]
                                                       browse once (read-only, no MQTT, no journal)
-  trailsource gen-cert --uri <urn> [--host <name>]... [--out <dir>]
+  trailsource gen-cert --uri <urn> [--host <name>]... [--pki <dir>]
                                                       create a client certificate for Sign/SignAndEncrypt
   trailsource config-version --config <f>             print config_version of a config file
   trailsource version                                 print the build version
@@ -364,7 +366,7 @@ func browseCmd(args []string) int {
 func genCertCmd(args []string) int {
 	fs := flag.NewFlagSet("gen-cert", flag.ContinueOnError)
 	uri := fs.String("uri", "", "application URI written into the certificate, e.g. urn:trailsource:host01:extruder-01")
-	out := fs.String("out", "pki", "directory for client.der and client.key.pem")
+	pki := fs.String("pki", "pki", "PKI directory (source.pki_dir): writes own/certs/client.der and own/private/client.key.pem and creates trusted/, issuers/ and rejected/")
 	days := fs.Int("days", 730, "validity in days")
 	var hosts multiFlag
 	fs.Var(&hosts, "host", "DNS name or IP address for the certificate (repeatable)")
@@ -385,11 +387,18 @@ func genCertCmd(args []string) int {
 		fmt.Fprintf(os.Stderr, "gen-cert: %v\n", err)
 		return 1
 	}
-	if err := os.MkdirAll(*out, 0o700); err != nil {
+	if err := (trust.Store{Dir: *pki}).Ensure(); err != nil {
 		fmt.Fprintf(os.Stderr, "gen-cert: %v\n", err)
 		return 1
 	}
-	certPath, keyPath := *out+"/client.der", *out+"/client.key.pem"
+	certPath := filepath.Join(*pki, "own", "certs", "client.der")
+	keyPath := filepath.Join(*pki, "own", "private", "client.key.pem")
+	for _, d := range []string{filepath.Dir(certPath), filepath.Dir(keyPath)} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			fmt.Fprintf(os.Stderr, "gen-cert: %v\n", err)
+			return 1
+		}
+	}
 	for _, f := range []struct {
 		path string
 		data []byte
@@ -405,7 +414,8 @@ func genCertCmd(args []string) int {
 		}
 	}
 	fmt.Printf("certificate  %s\nprivate key  %s\nthumbprint   %s (SHA-1, as servers show it)\napplication  %s\n", certPath, keyPath, res.Thumbprint, *uri)
-	fmt.Println("Set source.certificate_file and source.private_key_file, then trust the certificate on the server.")
+	fmt.Printf("trust list   %s/trusted/certs (empty: no server is trusted yet)\n", *pki)
+	fmt.Println("Trust this client certificate on the server. With source.pki_dir set to this directory the adapter uses it by default.")
 	return 0
 }
 

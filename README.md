@@ -52,7 +52,11 @@ continues. The report shows the gap with begin, end and duration.
 `make scenario-restart` adds the fourth case: an adapter restart is a
 `source.bridge.restarted` record with `common.restart`, anchored to the
 last hash before the stop, and verification reports it as a notice, not as
-an error.
+an error. `make scenario-server-restart` brings the server back with
+reversed references, a renumbered namespace and two new variables: the
+diff is the two variables, and every other `entity_key` stays. `make
+scenario-half-open` keeps the connection open but silent: the loss is a
+record seven seconds later, with its reason.
 
 ## Report
 
@@ -107,11 +111,15 @@ better choice.
 ## What it does
 
 - Connects to an OPC UA server (None, Sign or SignAndEncrypt; anonymous or
-  username; optional pinning of the server certificate), browses the
-  address space below configured roots and computes a fingerprint:
-  `sha256` over the sorted list of NodeId, BrowseName and DataType of every
-  Variable node. The browse is batched per group of siblings, so a few
-  thousand nodes take seconds, not minutes.
+  username). A secured session uses only a server certificate from the
+  OPC UA trust list in `pki_dir` (plus an optional pin); a refused one is
+  kept in `rejected/` and recorded. It browses the address space below
+  configured roots and computes a fingerprint over the sorted normalized
+  paths, NodeIds, node classes and data types of every Variable node, so a
+  reorder or a renumbered namespace is no change and a rename or move is.
+  Each variable's `entity_key` survives reorders and restarts. The browse
+  is batched per group of siblings, so a few thousand nodes take seconds,
+  not minutes.
 - Persists that snapshot and diffs it on every connect and re-browse, and
   when the server deletes a monitored node. A different fingerprint
   produces one `source.inventory.changed` record with the added, removed
@@ -147,9 +155,6 @@ verifier with the same findings.
 ## What it does not do
 
 - It does not write. No OPC UA Write or Call, in any configuration.
-- It does not check the server certificate against a trust list; the OPC
-  UA stack it uses does not. Pin the certificate with `server_thumbprint`
-  (`docs/CONNECT_YOUR_SERVER.md`).
 - It does not sign records, notarise anything, or make any statement about
   regulatory compliance. A verified journal proves that the journal is
   internally consistent and unchanged since sealing, nothing more. Whoever
@@ -159,7 +164,7 @@ verifier with the same findings.
 ## Quick start
 
 ```sh
-make scenarios                # the four scenarios above, local processes
+make scenarios                # all six scenarios (docs/SCENARIOS.md), local processes
 ```
 
 Your own server, step by step (endpoints, security, certificate, first

@@ -17,8 +17,7 @@ source:
   endpoint: opc.tcp://opcua.umati.app:4840
   security_policy: ${INTEROP_SECURITY_POLICY}
   security_mode: ${INTEROP_SECURITY_MODE}
-  certificate_file: ${INTEROP_CERT}
-  private_key_file: ${INTEROP_KEY}
+  pki_dir: ${INTEROP_PKI}         # own/ client certificate, trusted/ server certificates, rejected/
   auth: anonymous
   browse_roots:
     - "ns=14;i=58634"   # FullMachineToolDynamic.Production

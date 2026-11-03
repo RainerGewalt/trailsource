@@ -19,8 +19,7 @@ source:
   endpoint: ${INTEROP_ENDPOINT}  # opc.tcp://milo.digitalpetri.com:62541/milo, or a local relay
   security_policy: ${INTEROP_SECURITY_POLICY}
   security_mode: ${INTEROP_SECURITY_MODE}
-  certificate_file: ${INTEROP_CERT}
-  private_key_file: ${INTEROP_KEY}
+  pki_dir: ${INTEROP_PKI}         # own/ client certificate, trusted/ server certificates, rejected/
   auth: anonymous
   browse_roots:
     - "ns=2;s=Demo.Dynamic"

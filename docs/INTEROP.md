@@ -87,11 +87,11 @@ is marked `truncated`.
 
 ### What did not work, or only partly
 
-- **Server certificate trust.** The OPC UA stack does not check the server
-  certificate against a trust list. Without `server_thumbprint`, a secured
-  session proves only that it is with whoever presented the certificate in
-  the endpoint list. Pinning is now available and documented in
-  `docs/CONNECT_YOUR_SERVER.md`; a trust-list check is not.
+- **Server certificate trust.** At the time of these runs the OPC UA stack
+  did not check the server certificate against a trust list, and
+  TrailSource did not either; only pinning was available. Both servers
+  were accepted unchecked. Fixed since: see "Server certificate trust"
+  below.
 - **Enumerations.** Companion-specification enumerations (for example the
   stack light's `SignalColor`, data type `ns=4;i=3004`) are recorded as the
   integer with the enumeration's NodeId as `data_type`. Names are not
@@ -104,11 +104,11 @@ is marked `truncated`.
   Structures the stack cannot decode are recorded as `body_base64`.
 - **Fingerprint scope.** In run C, a new job with a different name reused
   the NodeIds and variable BrowseNames of the previous one, so its
-  generation has the same fingerprint as an earlier one although the browse
-  paths differ. The fingerprint covers NodeId, BrowseName and DataType of
-  each variable, by design; paths are recorded in the inventory and in every
-  value record. Whether the fingerprint should include browse paths is an
-  open question, because changing it changes every existing fingerprint.
+  generation had the same fingerprint as an earlier one although the browse
+  paths differed: fingerprint version 1 covered NodeId, BrowseName and
+  DataType only. Fixed since: version 2 includes the normalized browse path
+  (`docs/RECORD_MAPPING.md`, "Bindings and fingerprint"), and a rename with
+  reused NodeIds is a diff, covered by a test.
 - **Truncated inventories shift.** With `max_nodes` reached, a node added
   or removed early in depth-first order moves the window: run C's
   generation 2 lists 8 nodes as added that existed all along. The record
@@ -148,11 +148,13 @@ the trust finding.
 
 ```sh
 make build
-./bin/trailsource gen-cert --uri urn:trailsource:interop:milo-demo --out .demo/interop/pki
+./bin/trailsource gen-cert --uri urn:trailsource:interop:milo-demo --pki .demo/interop/pki
 export INTEROP_ENDPOINT=opc.tcp://milo.digitalpetri.com:62541/milo \
        INTEROP_SECURITY_POLICY=Basic256Sha256 INTEROP_SECURITY_MODE=SignAndEncrypt \
-       INTEROP_CERT=$PWD/.demo/interop/pki/client.der INTEROP_KEY=$PWD/.demo/interop/pki/client.key.pem \
+       INTEROP_PKI=$PWD/.demo/interop/pki \
        INTEROP_MQTT_PORT=1883 INTEROP_DIR=$PWD/.demo/interop/milo
+./bin/trailsource browse --config configs/interop/milo-demo.yaml   # rejected: empty trust list
+mv .demo/interop/pki/rejected/*.der .demo/interop/pki/trusted/certs/   # after checking it
 ./bin/trailsource browse --config configs/interop/milo-demo.yaml
 ./bin/trailsource run --config configs/interop/milo-demo.yaml      # Ctrl-C after a few minutes
 ./bin/trailsource verify .demo/interop/milo/journal/*.jsonl
@@ -166,3 +168,33 @@ start the relay while the adapter runs. The umati configuration works the
 same way; its NodeIds were valid on 2026-11-03 and may change when the
 server is rebuilt. Keep the limits in the configurations: these are shared
 public servers.
+
+## 2026-11-03, later: server certificate trust against Eclipse Milo
+
+Client: TrailSource with the trust list (`internal/trust`, layout and rules
+in `docs/CONNECT_YOUR_SERVER.md`), Basic256Sha256 + SignAndEncrypt, a fresh
+PKI from `trailsource gen-cert --pki` with an empty `trusted/certs`.
+Configuration `configs/interop/milo-demo.yaml`; one journal across both
+runs.
+
+1. **Empty trust list** (18:11:38 to 18:11:53 UTC). Every connect attempt
+   stopped before a session: `server certificate rejected (untrusted)`.
+   The server certificate (`CN=Eclipse Milo OPC UA Demo Server`, valid
+   until 2028-04-02, thumbprint `c75e5e8f51168ba9aa9fd4af07836de63850e71f`)
+   was copied to `pki/rejected/c75e5e8f….der`, and the journal got one
+   `source.connection.changed` record with
+   `reason_code: source.certificate_rejected`, `check: untrusted`, the
+   thumbprint, subject, validity and the path of the copy. Two attempts,
+   one record.
+2. **Certificate moved** from `rejected/` to `trusted/certs`.
+3. **Second run** (18:11:54 to 18:12:24 UTC). `source.bridge.restarted`
+   anchored to the first run, `source.connection_established`, initial
+   inventory, 634 values of 48 variables. Every session record carries
+   `server_certificate_thumbprint: c75e5e8f…`. The certificate's URI matched
+   the server's ApplicationURI.
+
+`trailsource verify`: OK, 640 records, 2 restart notices. The report shows
+the rejection as a 16 s connection gap with reason
+`source.certificate_rejected`. The test was not repeated against umati,
+and no server with a CA-signed certificate or CRL was available; those
+paths are covered by unit tests in `internal/trust`.

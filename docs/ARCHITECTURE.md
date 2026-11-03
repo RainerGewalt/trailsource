@@ -54,12 +54,14 @@ connect ──> browse ──> reconcile ──> subscribe ──(rebrowse timer
 ```
 
 - `connect`: endpoint discovery, security policy and mode from config,
-  anonymous or username token, optional pin of the server certificate
-  thumbprint (the stack does not check server certificates against a
-  trust list). The session identity, including the server certificate
-  thumbprint of secured sessions, is recorded in inventory and connection
-  records. Every session opens with `source.connection.changed`
-  (`established` or `restored`).
+  anonymous or username token. For a secured endpoint the server
+  certificate must pass the trust list in `pki_dir` (`internal/trust`:
+  validity, ApplicationURI, direct trust or a chain to a trusted CA with
+  current CRLs) and an optional pin; a refused certificate goes to
+  `rejected/` and is recorded as `source.certificate_rejected`. The
+  session identity, including the accepted server certificate thumbprint,
+  is recorded in inventory and connection records. Every session opens
+  with `source.connection.changed` (`established` or `restored`).
 - `browse`: depth-first along HasComponent, Organizes and HasProperty from
   each configured root, collecting Variable nodes with NodeClass,
   BrowseName, Description, AccessLevel, UserAccessLevel and DataType. The
@@ -137,5 +139,5 @@ company, site or customer references.
 Writes of any kind, CIP explicit messaging, record signatures, multiple
 sources per process, configuration hot reload, event subscriptions
 (Euromap cycle events, model change events), alarm word decoding,
-validation of server certificates against a trust list, resolution of
-enumeration names.
+resolution of enumeration names, certificate checks beyond the trust list
+(host names in the certificate, key usage), automatic CRL download.
