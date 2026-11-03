@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -25,8 +26,19 @@ import (
 	"github.com/RainerGewalt/trailsource/internal/trust"
 )
 
-// version is set at build time via -ldflags "-X main.version=...".
+// version is set at build time via -ldflags "-X main.version=...". A binary
+// built with `go install ...@v0.1.0` has no ldflags; it takes the module
+// version from the build info instead, so records name the real version.
 var version = "0.1.0-dev"
+
+func init() {
+	if version != "0.1.0-dev" {
+		return
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		version = bi.Main.Version
+	}
+}
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `trailsource %s
