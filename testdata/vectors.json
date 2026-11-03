@@ -9,7 +9,7 @@
         "version": "0.0.0"
       },
       "stream_id": "vec",
-      "seq": 0,
+      "seq": "0",
       "prev_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
       "event_type": "test.vector.one",
       "time": {
@@ -29,11 +29,11 @@
         "b": 1
       },
       "content_hash": "sha256:cdab067e9f3beb32d1252cfd63e492592fecbf591b0d08cadb24bb17f3864246",
-      "chain_hash": "sha256:9e785b2e1026dbbdf9ecfa8bbbcc96c0c6ff6ac02e1c9ddfe152e3d271e22fd8"
+      "chain_hash": "sha256:a6dd6d7aa9cd463cf33d8bfe92441945d92a0066f809c8c18ced5b9dd0a94c05"
     },
     "expected_content_hash": "sha256:cdab067e9f3beb32d1252cfd63e492592fecbf591b0d08cadb24bb17f3864246",
-    "expected_chain_hash": "sha256:9e785b2e1026dbbdf9ecfa8bbbcc96c0c6ff6ac02e1c9ddfe152e3d271e22fd8",
-    "expected_core_jcs": "{\"actor\":{\"auth\":\"none\"},\"content_hash\":\"sha256:cdab067e9f3beb32d1252cfd63e492592fecbf591b0d08cadb24bb17f3864246\",\"event_type\":\"test.vector.one\",\"policy\":{\"hash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"id\":\"none\",\"version\":\"0\"},\"prev_hash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"producer\":{\"id\":\"vector\",\"kind\":\"source-bridge\",\"version\":\"0.0.0\"},\"schema\":\"trail.evidence/1\",\"seq\":0,\"stream_id\":\"vec\",\"time\":{\"recorded_at\":\"2026-01-01T00:00:00.000Z\",\"source\":\"system\"}}"
+    "expected_chain_hash": "sha256:a6dd6d7aa9cd463cf33d8bfe92441945d92a0066f809c8c18ced5b9dd0a94c05",
+    "expected_core_jcs": "{\"actor\":{\"auth\":\"none\"},\"content_hash\":\"sha256:cdab067e9f3beb32d1252cfd63e492592fecbf591b0d08cadb24bb17f3864246\",\"event_type\":\"test.vector.one\",\"policy\":{\"hash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"id\":\"none\",\"version\":\"0\"},\"prev_hash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"producer\":{\"id\":\"vector\",\"kind\":\"source-bridge\",\"version\":\"0.0.0\"},\"schema\":\"trail.evidence/1\",\"seq\":\"0\",\"stream_id\":\"vec\",\"time\":{\"recorded_at\":\"2026-01-01T00:00:00.000Z\",\"source\":\"system\"}}"
   },
   {
     "name": "restart-with-optional-fields",
@@ -45,7 +45,7 @@
         "version": "0.0.0"
       },
       "stream_id": "vec",
-      "seq": 5,
+      "seq": "5",
       "prev_hash": "sha256:abcd0000000000000000000000000000000000000000000000000000000000ef",
       "event_type": "source.value.observed",
       "time": {
@@ -83,7 +83,7 @@
         "value_type": "float64"
       },
       "content_hash": "sha256:db8356eaccc3e3b0b2012a90263a935094cce68361dfe509782b2d0ff6640e9a",
-      "chain_hash": "sha256:0f80f6bcf7d0950c2616742cf540e28981352c623b67fe99a0d91ad71ff2e5cd",
+      "chain_hash": "sha256:3c6e78edb4a5aff666444ee51337d91ba0f831ed585240a5d60bef078438a08d",
       "chain_restart": true,
       "anchor_hash": "sha256:abcd0000000000000000000000000000000000000000000000000000000000ef",
       "context": {
@@ -91,8 +91,8 @@
       }
     },
     "expected_content_hash": "sha256:db8356eaccc3e3b0b2012a90263a935094cce68361dfe509782b2d0ff6640e9a",
-    "expected_chain_hash": "sha256:0f80f6bcf7d0950c2616742cf540e28981352c623b67fe99a0d91ad71ff2e5cd",
-    "expected_core_jcs": "{\"actor\":{\"auth\":\"self-declared\",\"id\":\"trailsource-opcua-01\",\"roles\":[\"collector\"]},\"anchor_hash\":\"sha256:abcd0000000000000000000000000000000000000000000000000000000000ef\",\"chain_restart\":true,\"content_hash\":\"sha256:db8356eaccc3e3b0b2012a90263a935094cce68361dfe509782b2d0ff6640e9a\",\"event_type\":\"source.value.observed\",\"policy\":{\"hash\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"id\":\"plant-a/addressspace\",\"kind\":\"addressspace\",\"status\":\"active\",\"version\":\"3\"},\"prev_hash\":\"sha256:abcd0000000000000000000000000000000000000000000000000000000000ef\",\"producer\":{\"id\":\"vector\",\"kind\":\"source-bridge\",\"version\":\"0.0.0\"},\"schema\":\"trail.evidence/1\",\"seq\":5,\"stream_id\":\"vec\",\"time\":{\"occurred_at\":\"2026-01-01T00:00:01.100000Z\",\"read_at\":\"2026-01-01T00:00:01.200Z\",\"recorded_at\":\"2026-01-01T00:00:01.250Z\",\"source\":\"system\"}}"
+    "expected_chain_hash": "sha256:3c6e78edb4a5aff666444ee51337d91ba0f831ed585240a5d60bef078438a08d",
+    "expected_core_jcs": "{\"actor\":{\"auth\":\"self-declared\",\"id\":\"trailsource-opcua-01\",\"roles\":[\"collector\"]},\"anchor_hash\":\"sha256:abcd0000000000000000000000000000000000000000000000000000000000ef\",\"chain_restart\":true,\"content_hash\":\"sha256:db8356eaccc3e3b0b2012a90263a935094cce68361dfe509782b2d0ff6640e9a\",\"event_type\":\"source.value.observed\",\"policy\":{\"hash\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"id\":\"plant-a/addressspace\",\"kind\":\"addressspace\",\"status\":\"active\",\"version\":\"3\"},\"prev_hash\":\"sha256:abcd0000000000000000000000000000000000000000000000000000000000ef\",\"producer\":{\"id\":\"vector\",\"kind\":\"source-bridge\",\"version\":\"0.0.0\"},\"schema\":\"trail.evidence/1\",\"seq\":\"5\",\"stream_id\":\"vec\",\"time\":{\"occurred_at\":\"2026-01-01T00:00:01.100000Z\",\"read_at\":\"2026-01-01T00:00:01.200Z\",\"recorded_at\":\"2026-01-01T00:00:01.250Z\",\"source\":\"system\"}}"
   },
   {
     "name": "unicode-and-escaping",
@@ -104,8 +104,8 @@
         "version": "0.0.0"
       },
       "stream_id": "vec",
-      "seq": 1,
-      "prev_hash": "sha256:9e785b2e1026dbbdf9ecfa8bbbcc96c0c6ff6ac02e1c9ddfe152e3d271e22fd8",
+      "seq": "1",
+      "prev_hash": "sha256:a6dd6d7aa9cd463cf33d8bfe92441945d92a0066f809c8c18ced5b9dd0a94c05",
       "event_type": "source.inventory.changed",
       "time": {
         "recorded_at": "2026-01-01T00:00:00.000Z",
@@ -138,12 +138,12 @@
         "𝄞": "astral key sorts before U+FF21 in UTF-16"
       },
       "content_hash": "sha256:5a4731bc5fb70bbee37d719346741c840be947bc967e02169fb68ba732584745",
-      "chain_hash": "sha256:c25b00a5d3bf19521451b6c5b40553f130ac0fa2e5ad26bf2a1d9b446c4bc850",
+      "chain_hash": "sha256:af41a950601d8dc5e74d7f0cde2ff837be9ef009746113e3cdbfb2d81ae3ebb0",
       "chain_restart": true,
-      "anchor_hash": "sha256:9e785b2e1026dbbdf9ecfa8bbbcc96c0c6ff6ac02e1c9ddfe152e3d271e22fd8"
+      "anchor_hash": "sha256:a6dd6d7aa9cd463cf33d8bfe92441945d92a0066f809c8c18ced5b9dd0a94c05"
     },
     "expected_content_hash": "sha256:5a4731bc5fb70bbee37d719346741c840be947bc967e02169fb68ba732584745",
-    "expected_chain_hash": "sha256:c25b00a5d3bf19521451b6c5b40553f130ac0fa2e5ad26bf2a1d9b446c4bc850",
-    "expected_core_jcs": "{\"actor\":{\"auth\":\"none\"},\"anchor_hash\":\"sha256:9e785b2e1026dbbdf9ecfa8bbbcc96c0c6ff6ac02e1c9ddfe152e3d271e22fd8\",\"chain_restart\":true,\"content_hash\":\"sha256:5a4731bc5fb70bbee37d719346741c840be947bc967e02169fb68ba732584745\",\"event_type\":\"source.inventory.changed\",\"policy\":{\"hash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"id\":\"none\",\"version\":\"0\"},\"prev_hash\":\"sha256:9e785b2e1026dbbdf9ecfa8bbbcc96c0c6ff6ac02e1c9ddfe152e3d271e22fd8\",\"producer\":{\"id\":\"vector\",\"kind\":\"source-bridge\",\"version\":\"0.0.0\"},\"schema\":\"trail.evidence/1\",\"seq\":1,\"stream_id\":\"vec\",\"time\":{\"recorded_at\":\"2026-01-01T00:00:00.000Z\",\"source\":\"system\"}}"
+    "expected_chain_hash": "sha256:af41a950601d8dc5e74d7f0cde2ff837be9ef009746113e3cdbfb2d81ae3ebb0",
+    "expected_core_jcs": "{\"actor\":{\"auth\":\"none\"},\"anchor_hash\":\"sha256:a6dd6d7aa9cd463cf33d8bfe92441945d92a0066f809c8c18ced5b9dd0a94c05\",\"chain_restart\":true,\"content_hash\":\"sha256:5a4731bc5fb70bbee37d719346741c840be947bc967e02169fb68ba732584745\",\"event_type\":\"source.inventory.changed\",\"policy\":{\"hash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"id\":\"none\",\"version\":\"0\"},\"prev_hash\":\"sha256:a6dd6d7aa9cd463cf33d8bfe92441945d92a0066f809c8c18ced5b9dd0a94c05\",\"producer\":{\"id\":\"vector\",\"kind\":\"source-bridge\",\"version\":\"0.0.0\"},\"schema\":\"trail.evidence/1\",\"seq\":\"1\",\"stream_id\":\"vec\",\"time\":{\"recorded_at\":\"2026-01-01T00:00:00.000Z\",\"source\":\"system\"}}"
   }
 ]

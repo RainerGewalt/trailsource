@@ -141,11 +141,11 @@ type entry struct {
 }
 
 type wireRecord struct {
-	StreamID     string      `json:"stream_id"`
-	Seq          json.Number `json:"seq"`
-	EventType    string      `json:"event_type"`
-	ChainRestart bool        `json:"chain_restart"`
-	AnchorHash   string      `json:"anchor_hash"`
+	StreamID     string          `json:"stream_id"`
+	Seq          json.RawMessage `json:"seq"`
+	EventType    string          `json:"event_type"`
+	ChainRestart bool            `json:"chain_restart"`
+	AnchorHash   string          `json:"anchor_hash"`
 	Producer     struct {
 		ID string `json:"id"`
 	} `json:"producer"`
@@ -175,10 +175,7 @@ func readEntries(r io.Reader) (map[string][]entry, []string, error) {
 		if err := json.Unmarshal(b, &w); err != nil {
 			continue // verify reports unparsable lines
 		}
-		seq, err := w.Seq.Int64()
-		if err != nil {
-			seq = -1
-		}
+		seq := seqFromRaw(w.Seq)
 		e := entry{line: line, seq: seq, eventType: w.EventType, producer: w.Producer.ID, endpoint: w.Context.Endpoint,
 			recordedAt: w.Time.RecordedAt, readAt: w.Time.ReadAt, restart: w.ChainRestart, anchor: w.AnchorHash, payload: w.Payload}
 		if _, seen := streams[w.StreamID]; !seen {
@@ -423,6 +420,22 @@ func legacyConnectionCode(c connectionPayload) string {
 		return status.ConnectionClosed
 	}
 	return status.ConnectionLost
+}
+
+// seqFromRaw reads seq in either form (decimal string, or the JSON integer
+// of older journals); -1 when invalid. Verification reports the details.
+func seqFromRaw(raw json.RawMessage) int64 {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return -1
+	}
+	n, form := evidence.ParseSeq(v)
+	if form == evidence.SeqInvalid || n > 1<<63-1 {
+		return -1
+	}
+	return int64(n)
 }
 
 func parseTime(s string) (time.Time, bool) {

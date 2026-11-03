@@ -30,8 +30,8 @@ Stream plant-a-ext-01-extruder-01-opcua
 
   Restarts (2)
     seq 0      2026-11-02T10:00:00.000Z  anchor genesis
-    seq 12     2026-11-02T10:00:50.000Z  anchor sha256:4ba0183bdc33..., 10s after the previous record
+    seq 12     2026-11-02T10:00:50.000Z  anchor sha256:e799205b5251..., 10s after the previous record
 
 Findings (2)
   notice restart        line 1      seq 0      restart at seq 0, anchor sha256:0000000000000000000000000000000000000000000000000000000000000000 (previous segment not in this journal)
-  notice restart        line 13     seq 12     restart at seq 12, anchor sha256:4ba0183bdc33a88f3c3d4316fc202e74f3282ff3935d9dffa46c8ebbbdcfe3b8
+  notice restart        line 13     seq 12     restart at seq 12, anchor sha256:e799205b5251cc1670433db1e813a78ef519d5fd1dc2a85301ede8f49181ccbc

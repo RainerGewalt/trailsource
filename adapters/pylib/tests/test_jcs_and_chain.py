@@ -57,11 +57,11 @@ class ChainTests(unittest.TestCase):
 
             s2 = Sealer(store, producer, "s")
             r = s2.seal(_record(3))
-            self.assertEqual(r["seq"], 3)
+            self.assertEqual(r["seq"], "3")
             self.assertTrue(r["chain_restart"])
             self.assertEqual(r["anchor_hash"], recs[2]["chain_hash"])
             r2 = s2.seal(_record(4))
-            self.assertEqual((r2["seq"], r2["prev_hash"]), (4, r["chain_hash"]))
+            self.assertEqual((r2["seq"], r2["prev_hash"]), ("4", r["chain_hash"]))
 
             report = verify_records(recs + [r, r2])
             self.assertTrue(report.ok, report.issues)
@@ -97,3 +97,13 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SeqFormTests(unittest.TestCase):
+    def test_parse_seq(self):
+        from trailsource_evidence.record import parse_seq
+        self.assertEqual(parse_seq("0"), (0, "string"))
+        self.assertEqual(parse_seq("18446744073709551615"), (2 ** 64 - 1, "string"))
+        self.assertEqual(parse_seq(7), (7, "integer"))
+        for bad in ("01", "-1", "", "1e3", "18446744073709551616", "\u0661", True, 1.0, None):
+            self.assertEqual(parse_seq(bad)[1], "invalid", bad)

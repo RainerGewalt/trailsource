@@ -18,6 +18,7 @@ type IssueKind string
 
 const (
 	IssueRestart       IssueKind = "restart"        // notice: chain_restart record, anchor consistent
+	IssueSeqInteger    IssueKind = "seq_integer"    // notice: seq written as a JSON integer (journal from before the string rule)
 	IssueSeqGap        IssueKind = "seq_gap"        // seq is not previous + 1 without chain_restart
 	IssueHashMismatch  IssueKind = "hash_mismatch"  // recomputed content_hash or chain_hash differs
 	IssueChainBreak    IssueKind = "chain_break"    // prev_hash or restart anchor does not link to the previous record
@@ -34,9 +35,9 @@ type Issue struct {
 }
 
 // IsBreak reports whether the issue is an integrity failure (as opposed to a
-// restart notice).
+// notice: restart, seq_integer).
 func (i Issue) IsBreak() bool {
-	return i.Kind != IssueRestart
+	return i.Kind != IssueRestart && i.Kind != IssueSeqInteger
 }
 
 // StreamReport summarises one stream.
@@ -119,16 +120,15 @@ func VerifyJournal(r io.Reader) (Report, error) {
 	return report, nil
 }
 
+// seqOf returns seq as int64 for ordering and reporting, or -1 when it is
+// invalid. Values beyond int64 are reported as invalid as well; a stream
+// does not reach 2^63 records.
 func seqOf(m map[string]any) int64 {
-	n, ok := m["seq"].(json.Number)
-	if !ok {
+	n, form := ParseSeq(m["seq"])
+	if form == SeqInvalid || n > 1<<63-1 {
 		return -1
 	}
-	v, err := n.Int64()
-	if err != nil {
-		return -1
-	}
-	return v
+	return int64(n)
 }
 
 func verifyStream(sid string, recs []parsed, issues *[]Issue) StreamReport {
@@ -137,9 +137,12 @@ func verifyStream(sid string, recs []parsed, issues *[]Issue) StreamReport {
 	var prevSeq int64 = -1
 	first := true
 
+	integerSeqs := 0
+	var firstInteger parsed
 	add := func(kind IssueKind, p parsed, seq int64, detail string) {
 		*issues = append(*issues, Issue{Kind: kind, StreamID: sid, Line: p.line, Seq: seq, Detail: detail})
 		switch kind {
+		case IssueSeqInteger:
 		case IssueRestart:
 			sr.Restarts++
 		case IssueSeqGap:
@@ -162,8 +165,14 @@ func verifyStream(sid string, recs []parsed, issues *[]Issue) StreamReport {
 		if s, _ := m["schema"].(string); s != Schema {
 			add(IssueSchemaInvalid, p, seq, fmt.Sprintf("unsupported schema %q", s))
 		}
+		if _, form := ParseSeq(m["seq"]); form == SeqInteger {
+			if integerSeqs == 0 {
+				firstInteger = p
+			}
+			integerSeqs++
+		}
 		if seq < 0 {
-			add(IssueSchemaInvalid, p, seq, "seq missing or not a non-negative integer")
+			add(IssueSchemaInvalid, p, seq, "seq missing or not a canonical decimal string")
 		}
 		payload, hasPayload := m["payload"]
 		if !hasPayload {
@@ -235,6 +244,10 @@ func verifyStream(sid string, recs []parsed, issues *[]Issue) StreamReport {
 		prevHash = gotChain
 		prevSeq = seq
 		first = false
+	}
+	if integerSeqs > 0 {
+		add(IssueSeqInteger, firstInteger, seqOf(firstInteger.m), fmt.Sprintf(
+			"%d record(s) write seq as a JSON integer, the form of journals written before seq became a decimal string; accepted, hashes are checked as written", integerSeqs))
 	}
 	sr.LastChain = prevHash
 	return sr

@@ -137,7 +137,7 @@ func (s *Sealer) Seal(r *evidence.Record) error {
 	}
 	r.PrevHash = anchor
 	if s.state.Sealed {
-		r.Seq = s.state.Seq + 1
+		r.Seq = evidence.Seq(s.state.Seq + 1)
 	} else {
 		r.Seq = 0
 	}
@@ -147,7 +147,7 @@ func (s *Sealer) Seal(r *evidence.Record) error {
 	}
 	next := State{
 		StreamID:  s.stream,
-		Seq:       r.Seq,
+		Seq:       uint64(r.Seq),
 		ChainHash: r.ChainHash,
 		UpdatedAt: r.Time.RecordedAt,
 		Sealed:    true,

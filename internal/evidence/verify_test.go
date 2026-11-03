@@ -2,6 +2,7 @@ package evidence
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -12,7 +13,7 @@ func sealedChain(t *testing.T, n int) []Record {
 	prev := GenesisHash
 	for i := 0; i < n; i++ {
 		r := baseRecord()
-		r.Seq = uint64(i)
+		r.Seq = Seq(i)
 		r.PrevHash = prev
 		r.Payload = map[string]any{"i": i}
 		if err := Seal(&r); err != nil {
@@ -160,5 +161,84 @@ func TestVerifyResealedEditBreaksNextLine(t *testing.T) {
 	}
 	if rep.OK() {
 		t.Fatal("re-sealed edit accepted")
+	}
+}
+
+func TestSeqIsWrittenAsCanonicalDecimalString(t *testing.T) {
+	r := baseRecord()
+	r.Seq = 18446744073709551615
+	if err := Seal(&r); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(r)
+	if !strings.Contains(string(raw), `"seq":"18446744073709551615"`) {
+		t.Fatalf("seq not a decimal string: %s", raw)
+	}
+	var back Record
+	if err := json.Unmarshal(raw, &back); err != nil || back.Seq != r.Seq {
+		t.Fatalf("round trip failed: %v %d", err, back.Seq)
+	}
+	for _, bad := range []string{`"01"`, `"-1"`, `"1e3"`, `""`, `"18446744073709551616"`, `"1.0"`} {
+		var s Seq
+		if err := json.Unmarshal([]byte(bad), &s); err == nil {
+			t.Errorf("%s accepted as seq", bad)
+		}
+	}
+	var legacy Seq
+	if err := json.Unmarshal([]byte(`42`), &legacy); err != nil || legacy != 42 {
+		t.Fatalf("integer seq of older journals must still decode: %v", err)
+	}
+}
+
+// A journal written with integer seq (before the string rule) still
+// verifies; the verifier says so once per stream as a notice.
+func TestVerifyAcceptsIntegerSeqWithNotice(t *testing.T) {
+	var sb strings.Builder
+	prev := GenesisHash
+	for i := 0; i < 3; i++ {
+		r := baseRecord()
+		r.Seq = Seq(i)
+		r.PrevHash = prev
+		r.Payload = map[string]any{"i": i}
+		raw, _ := json.Marshal(r)
+		var m map[string]any
+		dec := json.NewDecoder(strings.NewReader(string(raw)))
+		dec.UseNumber()
+		_ = dec.Decode(&m)
+		m["seq"] = json.Number(strconv.Itoa(i)) // the old wire form
+		m["content_hash"], _ = Hash(m["payload"])
+		delete(m, "chain_hash")
+		m["chain_hash"], _ = Hash(coreFromMap(m))
+		prev = m["chain_hash"].(string)
+		line, _ := CanonicalJCS(m)
+		sb.Write(line)
+		sb.WriteByte('\n')
+	}
+	rep, err := VerifyJournal(strings.NewReader(sb.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	notices := 0
+	for _, i := range rep.Issues {
+		if i.Kind == IssueSeqInteger {
+			notices++
+		}
+	}
+	if !rep.OK() || notices != 1 || rep.Streams[0].LastSeq != 2 {
+		t.Fatalf("integer journal: ok=%v notices=%d %+v", rep.OK(), notices, rep.Issues)
+	}
+}
+
+func TestVerifyRejectsNonCanonicalSeq(t *testing.T) {
+	recs := sealedChain(t, 2)
+	raw := journal(recs)
+	raw = strings.Replace(raw, `"seq":"1"`, `"seq":"01"`, 1)
+	rep, _ := VerifyJournal(strings.NewReader(raw))
+	found := false
+	for _, i := range rep.Issues {
+		found = found || i.Kind == IssueSchemaInvalid
+	}
+	if rep.OK() || !found {
+		t.Fatalf("leading zero accepted: %+v", rep.Issues)
 	}
 }

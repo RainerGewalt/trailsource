@@ -87,9 +87,10 @@ class Sealer:
                 record.pop("chain_restart", None)
                 record.pop("anchor_hash", None)
             record["prev_hash"] = anchor
-            record["seq"] = self._state.seq + 1 if self._state.sealed else 0
+            seq = self._state.seq + 1 if self._state.sealed else 0
+            record["seq"] = str(seq)  # canonical decimal string on the wire
             seal(record)
-            nxt = ChainState(self._stream, record["seq"], record["chain_hash"], time_block["recorded_at"], True)
+            nxt = ChainState(self._stream, seq, record["chain_hash"], time_block["recorded_at"], True)
             self._store.save(nxt)
             self._state = nxt
             self._restart = False

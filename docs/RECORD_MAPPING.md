@@ -14,7 +14,7 @@ Every record is one JSON object (one line in a journal file):
 | `schema` | `trail.evidence/1` |
 | `producer` | `{kind: "source-bridge", id: <producer.id>, version: <build version>}` |
 | `stream_id` | the source id; one hash chain per source |
-| `seq` | persistent, strictly increasing by 1; survives restarts |
+| `seq` | persistent, strictly increasing by 1; survives restarts. Written as a canonical decimal string (`"0"`, `"1"`, ... no sign, no leading zeros, uint64 range) so that no JSON implementation rounds it. Journals written before this rule carry a JSON integer; `trailsource verify` accepts them with the notice `seq_integer` |
 | `prev_hash` | `chain_hash` of the previous record; genesis is `sha256:` + 64 zeros |
 | `chain_restart`, `anchor_hash` | present on the first record after a process start; `anchor_hash` is the last persisted `chain_hash` (or genesis) and equals `prev_hash` |
 | `event_type` | `source.value.observed`, `source.inventory.changed`, `source.connection.changed`, `source.bridge.restarted` |
@@ -189,7 +189,9 @@ schema, recomputed `content_hash`, recomputed `chain_hash` (over the core
 with the recomputed `content_hash`), linkage of `prev_hash` (or
 `anchor_hash` on restart) and `seq` continuity. Findings use the classes of
 the specification: `hash_mismatch`, `chain_break`, `seq_gap` and
-`schema_invalid` are errors, `restart` is a notice. A restart is a notice
+`schema_invalid` are errors, `restart` is a notice. `seq_integer` is a
+TrailSource notice for journals that still write `seq` as a JSON integer;
+a non-canonical string such as `"01"` is `schema_invalid`. A restart is a notice
 when the previous segment is absent or the anchor matches its last
 `chain_hash`; a restart whose anchor contradicts the previous segment in the
 same journal is a `chain_break`. Any error sets a non-zero exit code. An

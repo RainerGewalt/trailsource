@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .jcs import canonical_jcs
 
@@ -131,9 +131,23 @@ def verify_records(records: List[Dict[str, Any]]) -> Report:
     return report
 
 
+_MAX_SEQ = 2 ** 64 - 1
+
+
+def parse_seq(value: Any) -> Tuple[int, str]:
+    """Return (seq, form) with form "string" (canonical decimal string, the
+    current rule), "integer" (JSON integer of older journals) or "invalid"."""
+    if isinstance(value, str):
+        if value and value.isdigit() and value.isascii() and (value == "0" or value[0] != "0") and int(value) <= _MAX_SEQ:
+            return int(value), "string"
+        return -1, "invalid"
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= _MAX_SEQ:
+        return value, "integer"
+    return -1, "invalid"
+
+
 def _seq(rec: Dict[str, Any]) -> int:
-    s = rec.get("seq")
-    return s if isinstance(s, int) and not isinstance(s, bool) else -1
+    return parse_seq(rec.get("seq"))[0]
 
 
 def _verify_stream(sid: str, recs: List[tuple], report: Report) -> None:
@@ -158,7 +172,7 @@ def _verify_stream(sid: str, recs: List[tuple], report: Report) -> None:
         if rec.get("schema") != SCHEMA:
             add("schema", idx, seq, "unsupported schema %r" % rec.get("schema"))
         if seq < 0:
-            add("schema", idx, seq, "seq missing or not a non-negative integer")
+            add("schema", idx, seq, "seq missing or not a canonical decimal string")
         if "payload" in rec:
             want = sha256_hash(rec["payload"])
             if want != rec.get("content_hash"):

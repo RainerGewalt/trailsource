@@ -42,6 +42,11 @@ marked as preview.
 
 ### Changed
 
+- `seq` is written as a canonical decimal string (`"0"`, `"1"`, ...) in Go
+  and Python; `testdata/vectors.json` is regenerated. `trailsource verify`
+  still accepts journals with integer `seq` and reports them once per
+  stream with the notice `seq_integer`; `trailsource report` reads both.
+
 - `trailsource verify` reports the finding classes of the Trail Evidence
   Record specification (`hash_mismatch`, `chain_break`, `seq_gap`,
   `schema_invalid`, notice `restart`) and recomputes `chain_hash` with the

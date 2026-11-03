@@ -77,7 +77,7 @@ type Record struct {
 	Schema        string         `json:"schema"`
 	Producer      Producer       `json:"producer"`
 	StreamID      string         `json:"stream_id"`
-	Seq           uint64         `json:"seq"`
+	Seq           Seq            `json:"seq"` // canonical decimal string on the wire
 	PrevHash      string         `json:"prev_hash"`
 	EventType     string         `json:"event_type"`
 	Time          Time           `json:"time"`

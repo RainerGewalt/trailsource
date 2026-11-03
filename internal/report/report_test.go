@@ -46,7 +46,7 @@ func fixture(t *testing.T) []byte {
 	var seq uint64
 	emit := func(at time.Duration, restart bool, eventType string, policy evidence.Policy, payload map[string]any) {
 		ts := evidence.FormatTime(t0.Add(at))
-		r := evidence.Record{Schema: evidence.Schema, Producer: producer, StreamID: sid, Seq: seq, PrevHash: prev,
+		r := evidence.Record{Schema: evidence.Schema, Producer: producer, StreamID: sid, Seq: evidence.Seq(seq), PrevHash: prev,
 			EventType: eventType, Time: evidence.Time{RecordedAt: ts, ReadAt: ts, Source: evidence.TimeSourceSystem},
 			Actor: evidence.Actor{Auth: evidence.ActorAuthSelfDeclared, ID: producer.ID, Roles: []string{"collector"}}, Policy: policy, Payload: payload, Context: ctx}
 		if restart {
