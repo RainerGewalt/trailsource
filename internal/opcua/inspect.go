@@ -40,19 +40,15 @@ func Inspect(ctx context.Context, cfg *config.Config) (*Inspection, error) {
 		defer cancel()
 		_ = client.Close(closeCtx)
 	}()
-	roots := make([]*ua.NodeID, 0, len(cfg.Source.BrowseRoots))
-	for _, r := range cfg.Source.BrowseRoots {
-		nid, err := ua.ParseNodeID(r)
-		if err != nil {
-			return nil, fmt.Errorf("invalid browse root %q: %w", r, err)
-		}
-		roots = append(roots, nid)
-	}
 	nsCtx, cancelNS := context.WithTimeout(ctx, cfg.RequestTimeout())
 	namespaces, err := client.NamespaceArray(nsCtx)
 	cancelNS()
 	if err != nil {
 		namespaces = client.Namespaces()
+	}
+	roots, err := resolveRoots(cfg.Source.BrowseRoots, namespaces)
+	if err != nil {
+		return nil, err
 	}
 	browseCtx, cancel := context.WithTimeout(ctx, cfg.BrowseTimeout())
 	defer cancel()
@@ -61,10 +57,7 @@ func Inspect(ctx context.Context, cfg *config.Config) (*Inspection, error) {
 	if err != nil {
 		return nil, fmt.Errorf("browse: %w", err)
 	}
-	items := make([]inventory.Item, 0, len(res.Nodes))
-	for _, n := range res.Nodes {
-		items = append(items, n.Item)
-	}
+	items := inventoryItems(cfg.Source.ID, res.Nodes)
 	return &Inspection{Endpoint: cfg.Source.Endpoint, Session: info, Namespaces: namespaces, BrowseRoots: cfg.Source.BrowseRoots,
 		Fingerprint: inventory.Fingerprint(items), Truncated: res.Truncated, Visited: res.Visited, Requests: res.Requests,
 		Took: time.Since(started).Round(time.Millisecond).String(), Items: items}, nil

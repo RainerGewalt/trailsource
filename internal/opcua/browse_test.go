@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/gopcua/opcua/ua"
+
+	"github.com/RainerGewalt/trailsource/internal/inventory"
 )
 
 // A browse on a dying session must abort instead of sealing an empty or
@@ -45,21 +47,32 @@ func TestIsConnectionError(t *testing.T) {
 	}
 }
 
-// fakeSpace is an in-memory address space. Node ids are their string names.
+// fakeSpace is an in-memory address space. Node ids are their string names
+// in namespace ns (default 1); BrowseNames are the names unless renamed.
 type fakeSpace struct {
 	class    map[string]ua.NodeClass
 	children map[string][]string
-	fail     map[string]error // VariableAttributes error per node
-	childErr error            // returned by every Children call when set
-	calls    []int            // batch size of every Children call
+	fail     map[string]error  // VariableAttributes error per node
+	childErr error             // returned by every Children call when set
+	calls    []int             // batch size of every Children call
+	ns       uint16            // namespace index of every node and BrowseName
+	rename   map[string]string // BrowseName override per node id
+	reverse  bool              // return references in reverse order
+}
+
+func (f *fakeSpace) nsIndex() uint16 {
+	if f.ns == 0 {
+		return 1
+	}
+	return f.ns
 }
 
 func (f *fakeSpace) ref(name string) nodeRef {
 	short := name
-	if i := strings.LastIndex(name, "/"); i >= 0 {
-		short = name[i+1:]
+	if r, ok := f.rename[name]; ok {
+		short = r
 	}
-	return nodeRef{ID: ua.NewStringNodeID(1, name), Name: short, Class: f.class[name]}
+	return nodeRef{ID: ua.NewStringNodeID(f.nsIndex(), name), Name: short, NameNS: f.nsIndex(), Class: f.class[name]}
 }
 
 func (f *fakeSpace) Describe(_ context.Context, id *ua.NodeID) (nodeRef, error) {
@@ -76,7 +89,12 @@ func (f *fakeSpace) Children(_ context.Context, ids []*ua.NodeID) ([][]nodeRef, 
 	}
 	out := make([][]nodeRef, len(ids))
 	for i, id := range ids {
-		for _, c := range f.children[id.StringID()] {
+		kids := f.children[id.StringID()]
+		for j := range kids {
+			c := kids[j]
+			if f.reverse {
+				c = kids[len(kids)-1-j]
+			}
 			out[i] = append(out[i], f.ref(c))
 		}
 	}
@@ -114,7 +132,8 @@ func newFakeSpace() *fakeSpace {
 		children: map[string][]string{
 			"root": {"a", "b"}, "a": {"a1", "shared", "deep"}, "a1": {"a1p"}, "deep": {"deeper"}, "deeper": {"tooDeep"}, "b": {"shared", "b1"},
 		},
-		fail: map[string]error{},
+		fail:   map[string]error{},
+		rename: map[string]string{},
 	}
 }
 
@@ -213,5 +232,133 @@ func TestCheckPinned(t *testing.T) {
 	}
 	if err := checkPinned(got, ""); err == nil {
 		t.Fatal("a pin on an unsecured session must be refused")
+	}
+}
+
+// fakeInventory browses a fake space from "root" and returns the items as the
+// adapter stores them (entity keys assigned) with their fingerprint.
+func fakeInventory(t *testing.T, f *fakeSpace, maxNodes int, namespaces []string) ([]inventory.Item, string) {
+	t.Helper()
+	res, err := browseTree(context.Background(), f, []*ua.NodeID{ua.NewStringNodeID(f.nsIndex(), "root")}, 5, maxNodes, namespaces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := inventoryItems("src", res.Nodes)
+	return items, inventory.Fingerprint(items)
+}
+
+func keysByNode(items []inventory.Item) map[string]string {
+	out := map[string]string{}
+	for _, it := range items {
+		out[it.Key()] = it.EntityKey
+	}
+	return out
+}
+
+var fakeNamespaces = []string{"http://opcfoundation.org/UA/", "urn:fake:server"}
+
+// A server that returns the same references in another order: no diff, the
+// same fingerprint, the same entity_key for every variable (including the
+// node reachable on two paths), also when max_nodes truncates the browse.
+func TestReorderedReferencesKeepBindingsAndFingerprint(t *testing.T) {
+	for _, maxNodes := range []int{100, 3} {
+		a, fpA := fakeInventory(t, newFakeSpace(), maxNodes, fakeNamespaces)
+		rev := newFakeSpace()
+		rev.reverse = true
+		b, fpB := fakeInventory(t, rev, maxNodes, fakeNamespaces)
+		if fpA != fpB {
+			t.Errorf("max_nodes=%d: fingerprint changed under reordering", maxNodes)
+		}
+		if d := inventory.Compute(a, b); !d.Empty() {
+			t.Errorf("max_nodes=%d: reordering produced a diff: %+v", maxNodes, d)
+		}
+		ka, kb := keysByNode(a), keysByNode(b)
+		if len(ka) != len(kb) {
+			t.Fatalf("max_nodes=%d: %d vs %d variables", maxNodes, len(ka), len(kb))
+		}
+		for k, v := range ka {
+			if kb[k] != v {
+				t.Errorf("max_nodes=%d: %s entity_key %s became %s", maxNodes, k, v, kb[k])
+			}
+		}
+	}
+}
+
+// A renamed object (the umati case: a job with a new name that reuses the
+// NodeIds of an earlier one) changes the path of everything below it.
+func TestRenamedNodeIsADiff(t *testing.T) {
+	a, fpA := fakeInventory(t, newFakeSpace(), 100, fakeNamespaces)
+	ren := newFakeSpace()
+	ren.rename["a"] = "a-renamed"
+	b, fpB := fakeInventory(t, ren, 100, fakeNamespaces)
+	if fpA == fpB {
+		t.Fatal("rename with reused NodeIds kept the fingerprint")
+	}
+	d := inventory.Compute(a, b)
+	paths := 0
+	for _, c := range d.Changed {
+		if c.Field == "browse_path" {
+			paths++
+		}
+	}
+	if len(d.Added) != 0 || len(d.Removed) != 0 || paths != 4 {
+		t.Fatalf("want 4 browse_path changes (a1, a1p, shared, tooDeep), got %+v", d)
+	}
+}
+
+// A variable moved to another parent is a diff on that variable only.
+func TestMovedNodeIsADiff(t *testing.T) {
+	a, fpA := fakeInventory(t, newFakeSpace(), 100, fakeNamespaces)
+	mv := newFakeSpace()
+	mv.children["b"] = []string{"shared"}
+	mv.children["a"] = append(mv.children["a"], "b1")
+	b, fpB := fakeInventory(t, mv, 100, fakeNamespaces)
+	if fpA == fpB {
+		t.Fatal("move kept the fingerprint")
+	}
+	d := inventory.Compute(a, b)
+	if len(d.Changed) != 1 || d.Changed[0].NodeID != "ns=1;s=b1" || d.Changed[0].Old != "root.b.b1" || d.Changed[0].New != "root.a.b1" {
+		t.Fatalf("want one browse_path change of b1, got %+v", d)
+	}
+}
+
+// The same namespace URI under another index (the server registered another
+// namespace first): native NodeIds change, nothing else does.
+func TestNamespaceIndexShiftIsNoDiff(t *testing.T) {
+	a, fpA := fakeInventory(t, newFakeSpace(), 100, fakeNamespaces)
+	shifted := newFakeSpace()
+	shifted.ns = 2
+	b, fpB := fakeInventory(t, shifted, 100, []string{"http://opcfoundation.org/UA/", "urn:another", "urn:fake:server"})
+	if fpA != fpB {
+		t.Fatal("namespace index shift changed the fingerprint")
+	}
+	if d := inventory.Compute(a, b); !d.Empty() {
+		t.Fatalf("namespace index shift produced a diff: %+v", d)
+	}
+	ka, kb := keysByNode(a), keysByNode(b)
+	for k, v := range ka {
+		if kb[k] != v {
+			t.Errorf("%s entity_key %s became %s", k, v, kb[k])
+		}
+	}
+	if a[0].NodeID == b[0].NodeID {
+		t.Fatal("test setup: native NodeIds should differ")
+	}
+}
+
+func TestResolveNodeIDWithNamespaceURI(t *testing.T) {
+	ns := []string{"http://opcfoundation.org/UA/", "urn:a", "urn:b"}
+	for in, want := range map[string]string{
+		"nsu=urn:b;s=Plant":                     "ns=2;s=Plant",
+		"nsu=http://opcfoundation.org/UA/;i=85": "i=85",
+		"ns=1;i=7":                              "ns=1;i=7",
+	} {
+		got, err := ResolveNodeID(in, ns)
+		if err != nil || got.String() != want {
+			t.Errorf("ResolveNodeID(%s) = %v %v, want %s", in, got, err, want)
+		}
+	}
+	if _, err := ResolveNodeID("nsu=urn:missing;s=X", ns); err == nil {
+		t.Error("unknown namespace URI must fail")
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/gopcua/opcua"
+	"github.com/gopcua/opcua/id"
 	"github.com/gopcua/opcua/ua"
 
 	"github.com/RainerGewalt/trailsource/internal/chain"
@@ -235,20 +236,11 @@ func (a *Adapter) session(ctx context.Context) (connected bool, err error) {
 		_ = client.Close(closeCtx)
 	}()
 
-	roots := make([]*ua.NodeID, 0, len(a.cfg.Source.BrowseRoots))
-	for _, r := range a.cfg.Source.BrowseRoots {
-		nid, err := ua.ParseNodeID(r)
-		if err != nil {
-			return true, fmt.Errorf("invalid browse root %q: %w", r, err)
-		}
-		roots = append(roots, nid)
-	}
-
 	for {
 		if ctx.Err() != nil {
 			return true, nil
 		}
-		nodes, err := a.browseAndReconcile(ctx, client, roots, sessionInfo)
+		nodes, err := a.browseAndReconcile(ctx, client, sessionInfo)
 		if err != nil {
 			return true, err
 		}
@@ -375,13 +367,17 @@ func (a *Adapter) snapshotPath() string {
 
 // browseAndReconcile browses the address space, compares it with the persisted
 // snapshot and emits source.inventory.changed when the fingerprint differs.
-func (a *Adapter) browseAndReconcile(ctx context.Context, client *opcua.Client, roots []*ua.NodeID, session sessionInfo) ([]VariableNode, error) {
+func (a *Adapter) browseAndReconcile(ctx context.Context, client *opcua.Client, session sessionInfo) ([]VariableNode, error) {
 	nsCtx, cancelNS := context.WithTimeout(ctx, a.cfg.RequestTimeout())
 	namespaces, err := client.NamespaceArray(nsCtx)
 	cancelNS()
 	if err != nil {
 		log.Printf("opc: namespace array unavailable: %v", err)
 		namespaces = client.Namespaces()
+	}
+	roots, err := resolveRoots(a.cfg.Source.BrowseRoots, namespaces)
+	if err != nil {
+		return nil, err
 	}
 
 	browseCtx, cancel := context.WithTimeout(ctx, a.cfg.BrowseTimeout())
@@ -399,10 +395,7 @@ func (a *Adapter) browseAndReconcile(ctx context.Context, client *opcua.Client, 
 		log.Printf("browse: max_nodes=%d reached after %d nodes visited; the inventory covers a prefix of the address space", a.cfg.Source.MaxNodes, res.Visited)
 	}
 	a.seen(time.Now())
-	items := make([]inventory.Item, 0, len(nodes))
-	for _, n := range nodes {
-		items = append(items, n.Item)
-	}
+	items := inventoryItems(a.cfg.Source.ID, nodes)
 	fp := inventory.Fingerprint(items)
 
 	previous, found, err := inventory.Load(a.snapshotPath())
@@ -418,10 +411,13 @@ func (a *Adapter) browseAndReconcile(ctx context.Context, client *opcua.Client, 
 		TakenAt:     evidence.FormatTime(now),
 		Fingerprint: fp,
 		Items:       items,
+
+		FingerprintVersion: inventory.FingerprintVersion,
 	}
 	changeKind := "initial"
 	var diff inventory.Diff
 	var previousFP any
+	rebaseline := found && previous.FingerprintVersion < inventory.FingerprintVersion
 	if found {
 		previousFP = previous.Fingerprint
 		if previous.Fingerprint == fp {
@@ -434,9 +430,15 @@ func (a *Adapter) browseAndReconcile(ctx context.Context, client *opcua.Client, 
 		snap.Generation = previous.Generation + 1
 		changeKind = "changed"
 		diff = inventory.Compute(previous.Items, items)
+		if rebaseline {
+			// The snapshot was fingerprinted under an older definition: the
+			// hashes are not comparable, so this browse is a new baseline.
+			// The diff still shows what changed by NodeId.
+			changeKind = "rebaseline"
+		}
 	}
 	a.setInventory(fp, snap.Generation)
-	reasonCode := status.Inventory(changeKind == "initial", len(diff.Added), len(diff.Removed), len(diff.Changed))
+	reasonCode := status.Inventory(changeKind != "changed", len(diff.Added), len(diff.Removed), len(diff.Changed))
 	log.Printf("browse complete variables=%d visited=%d requests=%d truncated=%v took=%s inventory_hash=%s generation=%d change=%s reason_code=%s added=%d removed=%d changed=%d",
 		len(items), res.Visited, res.Requests, res.Truncated, time.Since(started).Round(time.Millisecond), fp, snap.Generation, changeKind, reasonCode, len(diff.Added), len(diff.Removed), len(diff.Changed))
 
@@ -446,6 +448,7 @@ func (a *Adapter) browseAndReconcile(ctx context.Context, client *opcua.Client, 
 		"browse_limits":        map[string]any{"max_depth": a.cfg.Source.MaxDepth, "max_nodes": a.cfg.Source.MaxNodes},
 		"change_kind":          changeKind,
 		"fingerprint":          fp,
+		"fingerprint_version":  inventory.FingerprintVersion,
 		"previous_fingerprint": previousFP,
 		"generation":           snap.Generation,
 		"node_count":           len(items),
@@ -492,7 +495,14 @@ func (a *Adapter) subscribeUntilRebrowse(ctx context.Context, client *opcua.Clie
 	if err != nil {
 		return fmt.Errorf("create subscription: %w", err)
 	}
+	// dead is set when the connection is known to be gone; cancelling the
+	// subscription would then only wait for a timeout and delay the record
+	// of the loss.
+	dead := false
 	defer func() {
+		if dead {
+			return
+		}
 		cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = sub.Cancel(cancelCtx)
@@ -544,9 +554,15 @@ func (a *Adapter) subscribeUntilRebrowse(ctx context.Context, client *opcua.Clie
 	subscribedAt := time.Now()
 	rebrowseSoon := false
 	// A dead server does not always close the notification channel; the
-	// client state does change, so it is polled once per second.
+	// client state does change, so it is polled once per second. A
+	// half-open connection (socket open, nothing arrives) changes neither,
+	// so the server is also asked for its current time every
+	// liveness_interval_s; no answer within request_timeout_s ends the
+	// session as lost.
 	stateCheck := time.NewTicker(time.Second)
 	defer stateCheck.Stop()
+	liveness := time.NewTicker(a.cfg.LivenessInterval())
+	defer liveness.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -555,7 +571,13 @@ func (a *Adapter) subscribeUntilRebrowse(ctx context.Context, client *opcua.Clie
 			return nil
 		case <-stateCheck.C:
 			if st := client.State(); st != opcua.Connected {
+				dead = true
 				return fmt.Errorf("opc connection state %s", st)
+			}
+		case <-liveness.C:
+			if err := a.checkLiveness(ctx, client); err != nil {
+				dead = true
+				return err
 			}
 		case n, open := <-notifyCh:
 			if !open {
@@ -590,6 +612,25 @@ func (a *Adapter) subscribeUntilRebrowse(ctx context.Context, client *opcua.Clie
 			}
 		}
 	}
+}
+
+// checkLiveness reads ServerStatus.CurrentTime (i=2258). Any answer counts,
+// even a bad status: the server responded. No answer in time is an error.
+func (a *Adapter) checkLiveness(ctx context.Context, client *opcua.Client) error {
+	rctx, cancel := context.WithTimeout(ctx, a.cfg.RequestTimeout())
+	defer cancel()
+	_, err := client.Read(rctx, &ua.ReadRequest{
+		NodesToRead:        []*ua.ReadValueID{{NodeID: ua.NewNumericNodeID(0, id.Server_ServerStatus_CurrentTime), AttributeID: ua.AttributeIDValue}},
+		TimestampsToReturn: ua.TimestampsToReturnNeither,
+	})
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		return fmt.Errorf("server not answering: liveness read of ServerStatus.CurrentTime failed after %s: %w", a.cfg.RequestTimeout(), err)
+	}
+	a.seen(time.Now())
+	return nil
 }
 
 // minRebrowse is the shortest time between two browses triggered by deleted
@@ -640,7 +681,7 @@ func (a *Adapter) handleValue(bn *boundNode, dv *ua.DataValue, readAt time.Time)
 		"namespace_uri":        item.NamespaceURI,
 		"browse_path":          item.BrowsePath,
 		"browse_name":          item.BrowseName,
-		"entity_key":           inventory.EntityKey(a.cfg.Source.ID, item.BrowsePath, item.NodeID),
+		"entity_key":           item.EntityKey,
 		"semantic_role":        bn.res.SemanticRole,
 		"semantic_role_source": bn.res.Source,
 		"data_type":            item.DataType,
@@ -905,4 +946,33 @@ func checkPinned(pinned, got string) error {
 		return fmt.Errorf("server certificate thumbprint %s does not match server_thumbprint %s, refusing to connect", got, norm(pinned))
 	}
 	return nil
+}
+
+// resolveRoots turns the configured browse roots into NodeIds; "nsu=" roots
+// are resolved against the server's namespace array of this session.
+func resolveRoots(cfgRoots []string, namespaces []string) ([]*ua.NodeID, error) {
+	roots := make([]*ua.NodeID, 0, len(cfgRoots))
+	for _, r := range cfgRoots {
+		nid, err := ResolveNodeID(r, namespaces)
+		if err != nil {
+			return nil, fmt.Errorf("invalid browse root %q: %w", r, err)
+		}
+		roots = append(roots, nid)
+	}
+	return roots, nil
+}
+
+// inventoryItems collects the items of a browse and assigns their entity
+// keys; the keys are written back into the nodes, which the subscription
+// uses for value records.
+func inventoryItems(sourceID string, nodes []VariableNode) []inventory.Item {
+	items := make([]inventory.Item, len(nodes))
+	for i, n := range nodes {
+		items[i] = n.Item
+	}
+	inventory.AssignEntityKeys(sourceID, items)
+	for i := range nodes {
+		nodes[i].Item.EntityKey = items[i].EntityKey
+	}
+	return items
 }

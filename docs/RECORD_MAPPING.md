@@ -69,7 +69,7 @@ the native type offers.
 | NamespaceArray[ns] | `namespace_uri` | resolved at browse time |
 | BrowseName chain below root | `browse_path` | dot-joined, namespace prefixes stripped |
 | BrowseName | `browse_name` | |
-| derived from source id + browse path | `entity_key` | `<source_id>/<lowercase path with non-alphanumerics as "-">`; stable across NodeId changes as long as the path is stable |
+| derived from source id + browse path | `entity_key` | the binding of the variable, see "Bindings and fingerprint" below |
 | mapping file rule | `semantic_role`, `semantic_role_source` | `mapping` when a rule matched, `derived` (snake_case of the BrowseName) otherwise |
 | DataType attribute | `data_type` | builtin types as short names (`float64`, `int16`, ...), others as NodeId |
 | Value | `value`, `value_type` | see "Value encoding" below |
@@ -113,23 +113,80 @@ type.
 ## OPC UA: `source.inventory.changed`
 
 Emitted on the first browse of a source (no persisted snapshot,
-`change_kind: "initial"`) and whenever the fingerprint differs from the
-persisted snapshot (`change_kind: "changed"`).
+`change_kind: "initial"`), whenever the fingerprint differs from the
+persisted snapshot (`change_kind: "changed"`), and once after an upgrade
+that changed the fingerprint definition (`change_kind: "rebaseline"`,
+`reason_code: source.inventory_initial`: the old and new hashes are not
+comparable; the diff still lists what changed by node).
 
 | Payload field | Content |
 |---|---|
 | `reason_code` | `source.inventory_initial`, `source.node_removed`, `source.node_changed` or `source.node_added` (the first that applies; see `docs/STATUS.md`) |
-| `fingerprint`, `previous_fingerprint`, `generation` | `sha256` over sorted `NodeId|BrowseName|DataType` lines; generation increments per change |
+| `fingerprint`, `fingerprint_version`, `previous_fingerprint`, `generation` | see "Bindings and fingerprint"; `fingerprint_version` is 2; generation increments per change |
 | `truncated`, `browse_limits` | `truncated` is true when `max_nodes` stopped the browse: the inventory is the first `max_nodes` variables in depth-first order, not the whole address space |
-| `node_count`, `nodes` | the full list of Variable nodes with NodeId, browse path, data type, access levels |
-| `diff.added`, `diff.removed`, `diff.changed` | keyed by NodeId; `changed` lists field, old and new value for browse name, data type, browse path and access levels |
+| `node_count`, `nodes` | the full list of Variable nodes with NodeId, namespace URI, browse path, `normalized_path`, `entity_key`, node class, data type, access levels |
+| `diff.added`, `diff.removed`, `diff.changed` | keyed by the NodeId in namespace-URI form, so a renumbered namespace is not a change; `changed` lists field, old and new value for browse name, node class, data type, browse path (or `normalized_path` when only a namespace on the way changed) and access levels, and names the NodeId as the server uses it now |
 | `namespaces` | the server's NamespaceArray at browse time |
 | `session` | `auth`, `security_policy`, `security_mode`, `server_uri` and, for secured sessions, `server_certificate_thumbprint` (SHA-1) of the session that saw this address space |
 | `endpoint`, `browse_roots` | |
 
-The fingerprint deliberately ignores descriptions and access levels so that
-cosmetic edits do not create a new generation; access level changes are
-still visible in `diff.changed`.
+### Bindings and fingerprint
+
+Two properties are kept apart.
+
+**Binding stability.** `entity_key` is the identity of a variable for
+everyone downstream. It is `<source_id>/<browse path>`, lowercased, every
+run of characters other than `a-z0-9` collapsed to `-`. The browse path is
+the chain of BrowseNames from the browse root down to the variable. It does
+not depend on the order in which the server returns references: the walk
+sorts the children of every node by BrowseName (qualified with its
+namespace URI) and then by NodeId (in URI form) before descending. So the
+path a node with several parents keeps, and the set of variables a
+`max_nodes`-truncated browse contains, are the same however the server
+orders its references, and the same across restarts of the adapter or the
+server. NodeIds and namespace indexes are not part of the key. When two
+variables would get the same key (sibling BrowseNames that differ only in
+namespace, or only in characters the key drops), every variable of that
+group gets `~` plus eight hex characters of SHA-256 over its NodeId in URI
+form, so no key is shared and the suffix does not depend on which one was
+found first. The key changes when the path changes: a rename or a move is a
+new binding, and the inventory record says which old path became which new
+one.
+
+**Inventory fingerprint.** `fingerprint` must change when the address space
+changes in a way that matters, and only then. It is `sha256` over the
+sorted lines
+
+```
+<normalized_path>|<NodeId in URI form>|<NodeClass>|<DataType>
+```
+
+one per variable, each terminated by `\n`. The parts:
+
+- `normalized_path`: the browse root's NodeId in URI form, then one
+  `/{<namespace URI>}<BrowseName>` segment per level below it, for example
+  `nsu=urn:trailsource:sim:opcua;s=Plant/{http://opcfoundation.org/UA/}Line01/.../{http://opcfoundation.org/UA/}MeltPressureBar`.
+- NodeId in URI form: `ns=3;s=X` becomes `nsu=<URI of namespace 3>;s=X`;
+  namespace 0 stays `i=2258`.
+- NodeClass: `NodeClassVariable` for every inventory entry today.
+- DataType: the short name for builtin types (`float64`, `guid`, ...), the
+  type's NodeId in URI form otherwise.
+
+Consequences, each covered by a test in `internal/opcua/browse_test.go`:
+
+| Server-side change | Fingerprint | Diff | `entity_key` |
+|---|---|---|---|
+| References returned in another order | same | none | same |
+| Namespace registered under another index, same URI | same | none | same (native NodeIds in value records change) |
+| Node renamed, NodeIds reused (the umati job case in `docs/INTEROP.md`) | changes | `browse_path` changed for every variable below | new keys for those variables |
+| Variable moved to another parent | changes | `browse_path` changed for that variable | new key |
+| Variable added or removed | changes | added or removed | new key / key no longer used |
+| Description or access level changed | same | access levels in `diff.changed` when another change triggers a record | same |
+
+Descriptions and access levels stay outside the fingerprint so that
+cosmetic edits do not create a new generation. The scenario
+`make scenario-server-restart` checks the first two rows and the added
+variables end to end against the simulator.
 
 ## OPC UA: `source.bridge.restarted`
 

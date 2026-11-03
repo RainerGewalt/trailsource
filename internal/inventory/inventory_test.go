@@ -22,7 +22,7 @@ func TestFingerprintIsOrderIndependentAndSensitive(t *testing.T) {
 	c[0].Description = "irrelevant"
 	c[0].AccessLevel = 1
 	if Fingerprint(a) != Fingerprint(c) {
-		t.Fatal("fingerprint covers only NodeId, BrowseName and DataType")
+		t.Fatal("fingerprint ignores descriptions and access levels")
 	}
 	d := items()
 	d[0].DataType = "int16"
@@ -78,5 +78,60 @@ func TestEntityKey(t *testing.T) {
 	}
 	if got := EntityKey("src", "", "ns=2;i=42"); got != "src/ns-2-i-42" {
 		t.Fatalf("got %s", got)
+	}
+}
+
+func TestNormalizeNodeID(t *testing.T) {
+	if got := NormalizeNodeID("ns=3;s=Line1.Temp", "urn:x"); got != "nsu=urn:x;s=Line1.Temp" {
+		t.Fatal(got)
+	}
+	if got := NormalizeNodeID("i=2258", "http://opcfoundation.org/UA/"); got != "i=2258" {
+		t.Fatal(got)
+	}
+	a := Item{NodeID: "ns=2;s=X", NamespaceURI: "urn:x"}
+	b := Item{NodeID: "ns=5;s=X", NamespaceURI: "urn:x"}
+	if a.Key() != b.Key() {
+		t.Fatal("same URI and identifier must give the same key")
+	}
+}
+
+// Two variables whose browse paths collapse to the same entity_key (for
+// example sibling BrowseNames that differ only in namespace) get distinct,
+// order-independent keys.
+func TestAssignEntityKeysHasNoDuplicates(t *testing.T) {
+	mk := func() []Item {
+		return []Item{
+			{NodeID: "ns=2;s=A.Temp", NamespaceURI: "urn:a", BrowsePath: "A.Temp"},
+			{NodeID: "ns=3;s=A.Temp", NamespaceURI: "urn:b", BrowsePath: "A.Temp"},
+			{NodeID: "ns=2;s=A.Speed", NamespaceURI: "urn:a", BrowsePath: "A.Speed"},
+		}
+	}
+	x := mk()
+	AssignEntityKeys("src", x)
+	y := mk()
+	y[0], y[1] = y[1], y[0]
+	AssignEntityKeys("src", y)
+	seen := map[string]bool{}
+	for _, it := range x {
+		if seen[it.EntityKey] {
+			t.Fatalf("duplicate entity_key %s", it.EntityKey)
+		}
+		seen[it.EntityKey] = true
+	}
+	if x[2].EntityKey != "src/a-speed" {
+		t.Fatalf("unique paths keep the plain key, got %s", x[2].EntityKey)
+	}
+	byKey := func(items []Item) map[string]string {
+		m := map[string]string{}
+		for _, it := range items {
+			m[it.Key()] = it.EntityKey
+		}
+		return m
+	}
+	bx, by := byKey(x), byKey(y)
+	for k, v := range bx {
+		if by[k] != v {
+			t.Fatalf("collision suffix depends on order: %s %s vs %s", k, v, by[k])
+		}
 	}
 }

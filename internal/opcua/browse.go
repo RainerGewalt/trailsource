@@ -51,14 +51,15 @@ type BrowseResult struct {
 // Errors that concern a single node (unknown node, access denied) skip that
 // node only.
 func BrowseVariables(ctx context.Context, client *opcua.Client, roots []*ua.NodeID, maxDepth, maxNodes int, namespaces []string) (BrowseResult, error) {
-	return browseTree(ctx, &sessionSpace{client: client}, roots, maxDepth, maxNodes, namespaces)
+	return browseTree(ctx, &sessionSpace{client: client, namespaces: namespaces}, roots, maxDepth, maxNodes, namespaces)
 }
 
 // nodeRef is a node as a parent's Browse result describes it.
 type nodeRef struct {
-	ID    *ua.NodeID
-	Name  string
-	Class ua.NodeClass
+	ID     *ua.NodeID
+	Name   string
+	NameNS uint16 // namespace index of the BrowseName
+	Class  ua.NodeClass
 }
 
 // varAttrs are the attributes read for a Variable node.
@@ -119,7 +120,8 @@ func browseTree(ctx context.Context, as addressSpace, roots []*ua.NodeID, maxDep
 			}
 			kids = k[0]
 		}
-		if err := w.enter(ctx, ref, "", 0, attrs, kids); err != nil {
+		w.rootNorm = inventory.NormalizeNodeID(root.String(), w.uri(root.Namespace()))
+		if err := w.enter(ctx, ref, "", "", 0, attrs, kids); err != nil {
 			return BrowseResult{}, err
 		}
 	}
@@ -145,17 +147,68 @@ type walker struct {
 	namespaces []string
 	out        []VariableNode
 	truncated  bool
+	rootNorm   string // NodeId of the current browse root in URI form
+}
+
+func (w *walker) uri(ns uint16) string {
+	if int(ns) < len(w.namespaces) {
+		return w.namespaces[ns]
+	}
+	return ""
+}
+
+// segment is one level of a normalized path: the BrowseName qualified with
+// its namespace URI (or index, when the server did not name the URI).
+func (w *walker) segment(ref nodeRef) string {
+	u := w.uri(ref.NameNS)
+	if u == "" {
+		u = fmt.Sprintf("ns%d", ref.NameNS)
+	}
+	return "/{" + u + "}" + ref.Name
+}
+
+// canonicalOrder sorts children by BrowseName (with namespace URI) and then
+// by NodeId in URI form. The walk therefore visits nodes in an order that
+// depends on the address space, not on the order in which the server
+// returns references: which path a node with several parents keeps, and
+// which variables a truncated browse contains, stay the same when the server
+// only reorders.
+func (w *walker) canonicalOrder(kids []nodeRef) []nodeRef {
+	type keyed struct {
+		ref      nodeRef
+		name, id string
+	}
+	ks := make([]keyed, len(kids))
+	for i, k := range kids {
+		ks[i] = keyed{k, w.segment(k), inventory.NormalizeNodeID(k.ID.String(), w.uri(k.ID.Namespace()))}
+	}
+	sort.SliceStable(ks, func(i, j int) bool {
+		if ks[i].name != ks[j].name {
+			return ks[i].name < ks[j].name
+		}
+		return ks[i].id < ks[j].id
+	})
+	out := make([]nodeRef, len(ks))
+	for i, k := range ks {
+		out[i] = k.ref
+	}
+	return out
 }
 
 // enter processes a node that was just marked visited at depth level. kids
 // are its prefetched children (nil when they would lie beyond maxDepth).
-func (w *walker) enter(ctx context.Context, ref nodeRef, parentPath string, level int, attrs varAttrs, kids []nodeRef) error {
+// parentNorm is the parent's normalized path, empty for a browse root.
+func (w *walker) enter(ctx context.Context, ref nodeRef, parentPath, parentNorm string, level int, attrs varAttrs, kids []nodeRef) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	path := joinPath(parentPath, ref.Name)
+	norm := w.rootNorm
+	if parentNorm != "" {
+		norm = parentNorm + w.segment(ref)
+	}
 	if ref.Class == ua.NodeClassVariable {
-		w.out = append(w.out, w.variable(ref, path, attrs))
+		w.out = append(w.out, w.variable(ref, path, norm, attrs))
 		if len(w.out) >= w.maxNodes {
 			w.truncated = true
 			return nil
@@ -170,7 +223,7 @@ func (w *walker) enter(ctx context.Context, ref nodeRef, parentPath string, leve
 	childLevel := level + 1
 	pending := make([]nodeRef, 0, len(kids))
 	seen := map[string]bool{}
-	for _, k := range kids {
+	for _, k := range w.canonicalOrder(kids) {
 		key := k.ID.String()
 		if w.visited[key] || seen[key] {
 			continue
@@ -221,7 +274,7 @@ func (w *walker) enter(ctx context.Context, ref nodeRef, parentPath string, leve
 		if grandkids != nil {
 			next = grandkids[i]
 		}
-		if err := w.enter(ctx, k, path, childLevel, a, next); err != nil {
+		if err := w.enter(ctx, k, path, norm, childLevel, a, next); err != nil {
 			return err
 		}
 		if w.truncated {
@@ -231,13 +284,14 @@ func (w *walker) enter(ctx context.Context, ref nodeRef, parentPath string, leve
 	return nil
 }
 
-func (w *walker) variable(ref nodeRef, path string, a varAttrs) VariableNode {
+func (w *walker) variable(ref nodeRef, path, norm string, a varAttrs) VariableNode {
 	item := inventory.Item{
 		NodeID:         ref.ID.String(),
 		NamespaceIndex: ref.ID.Namespace(),
 		NodeClass:      ref.Class.String(),
 		BrowseName:     ref.Name,
 		BrowsePath:     path,
+		NormalizedPath: norm,
 		Description:    a.Description,
 		DataType:       a.DataType,
 	}
@@ -267,8 +321,9 @@ var childReferenceTypes = []uint32{id.HasComponent, id.Organizes, id.HasProperty
 
 // sessionSpace implements addressSpace on an OPC UA session.
 type sessionSpace struct {
-	client   *opcua.Client
-	requests int
+	client     *opcua.Client
+	namespaces []string
+	requests   int
 }
 
 func (s *sessionSpace) requestCount() int { return s.requests }
@@ -297,7 +352,7 @@ func (s *sessionSpace) Describe(ctx context.Context, nid *ua.NodeID) (nodeRef, e
 	}
 	if ok(res.Results[1]) {
 		if qn, isQN := res.Results[1].Value.Value().(*ua.QualifiedName); isQN && qn != nil {
-			ref.Name = qn.Name
+			ref.Name, ref.NameNS = qn.Name, qn.NamespaceIndex
 		} else {
 			ref.Name = stripNamespacePrefix(res.Results[1].Value.String())
 		}
@@ -383,11 +438,11 @@ func (s *sessionSpace) browseChunk(ctx context.Context, ids []*ua.NodeID, out []
 			if ref == nil || ref.NodeID == nil || ref.NodeID.NodeID == nil || ref.NodeID.ServerIndex != 0 {
 				continue
 			}
-			name := ref.NodeID.NodeID.String()
+			name, nameNS := ref.NodeID.NodeID.String(), uint16(0)
 			if ref.BrowseName != nil {
-				name = ref.BrowseName.Name
+				name, nameNS = ref.BrowseName.Name, ref.BrowseName.NamespaceIndex
 			}
-			out[n] = append(out[n], nodeRef{ID: ref.NodeID.NodeID, Name: name, Class: ref.NodeClass})
+			out[n] = append(out[n], nodeRef{ID: ref.NodeID.NodeID, Name: name, NameNS: nameNS, Class: ref.NodeClass})
 		}
 	}
 	return nil
@@ -456,7 +511,7 @@ func (s *sessionSpace) readChunk(ctx context.Context, ids []*ua.NodeID, out []va
 		}
 		if ok(r[3]) {
 			if nid, isNID := r[3].Value.Value().(*ua.NodeID); isNID {
-				a.DataType = DataTypeName(nid)
+				a.DataType = DataTypeName(nid, s.namespaces...)
 			}
 		} else if r[3] != nil {
 			if NodeGone(r[3].Status) {
@@ -567,12 +622,17 @@ func variantUint(v *ua.Variant) (uint32, bool) {
 }
 
 // DataTypeName maps the builtin OPC UA data type NodeIds to short names and
-// leaves every other type as its NodeId string.
-func DataTypeName(nodeID *ua.NodeID) string {
+// every other type to its NodeId string, in URI form ("nsu=...;i=3004") when
+// the namespace array is given, so that a renumbered namespace does not
+// change it.
+func DataTypeName(nodeID *ua.NodeID, namespaces ...string) string {
 	if nodeID == nil {
 		return ""
 	}
-	if nodeID.Namespace() != 0 {
+	if ns := nodeID.Namespace(); ns != 0 {
+		if int(ns) < len(namespaces) {
+			return inventory.NormalizeNodeID(nodeID.String(), namespaces[ns])
+		}
 		return nodeID.String()
 	}
 	switch nodeID.IntID() {
@@ -639,4 +699,28 @@ func DataTypeName(nodeID *ua.NodeID) string {
 	default:
 		return nodeID.String()
 	}
+}
+
+// ResolveNodeID parses a NodeId string. Besides the usual forms ("ns=2;s=X",
+// "i=85") it accepts "nsu=<namespace uri>;<identifier>", resolved against the
+// server's namespace array, so a configuration survives a server that
+// renumbers its namespaces.
+func ResolveNodeID(s string, namespaces []string) (*ua.NodeID, error) {
+	if !strings.HasPrefix(s, "nsu=") {
+		return ua.ParseNodeID(s)
+	}
+	semi := strings.Index(s, ";")
+	if semi < 0 {
+		return nil, fmt.Errorf("%q: nsu= needs ;<identifier>", s)
+	}
+	uri, rest := s[len("nsu="):semi], s[semi+1:]
+	for i, u := range namespaces {
+		if u == uri {
+			if i == 0 {
+				return ua.ParseNodeID(rest)
+			}
+			return ua.ParseNodeID(fmt.Sprintf("ns=%d;%s", i, rest))
+		}
+	}
+	return nil, fmt.Errorf("%q: namespace %s is not in the server's namespace array", s, uri)
 }

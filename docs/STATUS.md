@@ -48,7 +48,7 @@ joined by underscores). The severity is the catalog's.
 
 | Code | Severity | When |
 |---|---|---|
-| `source.inventory_initial` | info | First browse of the source, no persisted snapshot. |
+| `source.inventory_initial` | info | First browse of the source, no persisted snapshot; also the one record after an upgrade that changed the fingerprint definition (`change_kind: rebaseline`). |
 | `source.node_removed` | warning | Nodes disappeared from the address space. |
 | `source.node_changed` | warning | Attributes of nodes that stay changed: browse name, data type, browse path or access levels. |
 | `source.node_added` | info | Nodes appeared in the address space. |
