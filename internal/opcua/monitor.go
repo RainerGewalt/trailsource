@@ -65,13 +65,17 @@ func (m *monitor) open(ctx context.Context) error {
 	hb := opcua.NewMonitoredItemCreateRequestWithDefaults(ua.NewNumericNodeID(0, id.Server_ServerStatus_CurrentTime), ua.AttributeIDValue, heartbeatHandle)
 	hb.RequestedParameters.SamplingInterval = float64(m.interval.Milliseconds())
 	hb.RequestedParameters.QueueSize = 1
+	heartbeat := true
 	if res, err := sub.Monitor(ctx, ua.TimestampsToReturnNeither, hb); err != nil {
 		cctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		_ = sub.Cancel(cctx)
 		cancel()
 		return fmt.Errorf("heartbeat item: %w", err)
 	} else if len(res.Results) == 1 && res.Results[0].StatusCode != ua.StatusOK {
-		log.Printf("heartbeat item on ServerStatus.CurrentTime rejected (%s); a stall is then detected only if no monitored value changes", res.Results[0].StatusCode)
+		// Without the heartbeat a quiet but healthy subscription would look
+		// stalled; better no supervision than false records.
+		log.Printf("heartbeat item on ServerStatus.CurrentTime rejected (%s): stall detection is off for this subscription", res.Results[0].StatusCode)
+		heartbeat = false
 	}
 	m.sub, m.notifyCh = sub, ch
 	m.byHandle, m.byNode, m.itemIDs, m.next = map[uint32]*boundNode{}, map[string]uint32{}, map[uint32]uint32{}, 1
@@ -80,7 +84,10 @@ func (m *monitor) open(ctx context.Context) error {
 	if m.window < 2*time.Second {
 		m.window = 2 * time.Second
 	}
-	log.Printf("subscription %d: publishing interval %s, max keep-alive count %d, stall after %s without a publish response",
+	if !heartbeat {
+		m.window = 0
+	}
+	log.Printf("subscription %d: publishing interval %s, max keep-alive count %d, stall after %s without a publish response (0s: off)",
 		sub.SubscriptionID, sub.RevisedPublishingInterval, sub.RevisedMaxKeepAliveCount, m.window)
 	return nil
 }
@@ -88,7 +95,7 @@ func (m *monitor) open(ctx context.Context) error {
 // stalled reports whether the publish cycle has been silent for longer than
 // the keep-alive window.
 func (m *monitor) stalled(now time.Time) bool {
-	return now.Sub(m.lastPublish) > m.window
+	return m.window > 0 && now.Sub(m.lastPublish) > m.window
 }
 
 // rebuild replaces a stalled subscription; the caller re-adds the monitored

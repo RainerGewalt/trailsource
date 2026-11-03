@@ -59,7 +59,9 @@ MaxKeepAliveCount in publishing intervals. The OPC UA stack TrailSource uses
 does not pass keep-alive responses on, so every subscription also monitors
 `ServerStatus.CurrentTime`: each publishing interval then carries data, and
 the absence of any publish response is visible. That item is never
-recorded as a value.
+recorded as a value. A server that rejects it gets no stall supervision
+for that subscription (logged), because a quiet but healthy subscription
+would otherwise look stalled.
 
 ### On `source.inventory.changed`
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gopcua/opcua/ua"
 
@@ -378,5 +379,16 @@ func TestSessionInfoCarriesNoCredentials(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"auth":"username"`) {
 		t.Fatalf("auth kind missing: %s", raw)
+	}
+}
+
+func TestStallWindowZeroMeansOff(t *testing.T) {
+	m := &monitor{lastPublish: time.Now().Add(-time.Hour)}
+	if m.stalled(time.Now()) {
+		t.Fatal("window 0 (heartbeat rejected) must never report a stall")
+	}
+	m.window = 3 * time.Second
+	if !m.stalled(time.Now()) {
+		t.Fatal("an hour without a publish response is a stall")
 	}
 }
