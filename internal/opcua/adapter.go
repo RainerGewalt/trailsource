@@ -31,11 +31,12 @@ import (
 	"github.com/RainerGewalt/trailsource/internal/status"
 )
 
-// Event types emitted by this adapter.
+// Event types emitted by this adapter (see internal/status).
 const (
-	EventValueObserved     = "source.value.observed"
-	EventInventoryChanged  = "source.inventory.changed"
-	EventConnectionChanged = "source.connection.changed"
+	EventValueObserved     = status.EventValueObserved
+	EventInventoryChanged  = status.EventInventoryChanged
+	EventConnectionChanged = status.EventConnectionChanged
+	EventBridgeRestarted   = status.EventBridgeRestarted
 )
 
 // Adapter holds the runtime of one OPC UA source.
@@ -59,8 +60,9 @@ type Adapter struct {
 	lastSeen       string // when the source last answered: value, browse or connect
 
 	// Owned by the Run goroutine.
-	everConnected bool // a session was established in this process
-	outage        bool // a lost or failed record was emitted and no session since
+	everConnected bool      // a session was established in this process
+	outage        bool      // a lost or failed record was emitted and no session since
+	outageSince   time.Time // when that record was emitted
 }
 
 type boundNode struct {
@@ -73,7 +75,7 @@ func Run(ctx context.Context, cfg *config.Config, version string) error {
 	if cfg.Producer.Version != "" {
 		version = cfg.Producer.Version
 	}
-	a := &Adapter{cfg: cfg, version: version, contextValues: map[string]any{}, lastEvent: status.ChainRestart}
+	a := &Adapter{cfg: cfg, version: version, contextValues: map[string]any{}, lastEvent: status.Restart}
 
 	a.mapping = mapping.Empty()
 	if cfg.MappingFile != "" {
@@ -92,7 +94,11 @@ func Run(ctx context.Context, cfg *config.Config, version string) error {
 	}
 	a.sealer = sealer
 
+	// Evidence that exists without chain state means the state was lost,
+	// not that this stream is new (common.state_lost instead of common.restart).
+	priorEvidence := fileHasData(a.snapshotPath())
 	if cfg.Journal.Enabled {
+		priorEvidence = priorEvidence || fileHasData(cfg.Journal.Path)
 		j, err := journal.Open(cfg.Journal.Path)
 		if err != nil {
 			return fmt.Errorf("open journal: %w", err)
@@ -103,7 +109,7 @@ func Run(ctx context.Context, cfg *config.Config, version string) error {
 
 	will, _ := evidence.CanonicalJCS(map[string]any{
 		"status": "down", "reason": "will", "producer_id": cfg.Producer.ID, "source_id": cfg.Source.ID,
-		"last_event": status.MQTTWill, "last_seen": nil,
+		"last_event": status.WillPublished, "last_seen": nil,
 	})
 	pub, err := mqttpub.New(mqttpub.Options{
 		Broker:             cfg.MQTT.Broker,
@@ -133,6 +139,9 @@ func Run(ctx context.Context, cfg *config.Config, version string) error {
 	seq, chainHash, sealed := sealer.Position()
 	log.Printf("trailsource opcua adapter %s source_id=%s endpoint=%s topic_prefix=%s config_version=%s mapping=%s chain_seq=%d chain_hash=%s resumed=%v",
 		version, cfg.Source.ID, cfg.Source.Endpoint, cfg.MQTT.TopicPrefix, cfg.Version, a.mapping.Hash, seq, chainHash, sealed)
+	if err := a.emitStart(sealed, priorEvidence); err != nil {
+		return fmt.Errorf("emit start record: %w", err)
+	}
 
 	healthTicker := time.NewTicker(cfg.HealthInterval())
 	defer healthTicker.Stop()
@@ -158,8 +167,8 @@ func Run(ctx context.Context, cfg *config.Config, version string) error {
 			if !connected && !a.outage {
 				// Record the first failed attempt of an outage (or of a start
 				// against an unreachable server) once; retries stay silent.
-				a.outage = true
-				a.emitConnection("disconnected", status.ConnectionFailed, err.Error(), a.configuredSession())
+				a.outage, a.outageSince = true, time.Now()
+				a.emitConnection("disconnected", status.ConnectionFailed, err.Error(), a.configuredSession(), nil)
 			}
 		}
 		if ctx.Err() != nil {
@@ -196,12 +205,16 @@ func (a *Adapter) session(ctx context.Context) (connected bool, err error) {
 	a.lastError = ""
 	a.mu.Unlock()
 	code := status.ConnectionEstablished
-	if a.everConnected {
+	var extra map[string]any
+	if a.everConnected || a.outage {
 		code = status.ConnectionRestored
+		if a.outage {
+			extra = map[string]any{"down_ms": time.Since(a.outageSince).Milliseconds()}
+		}
 	}
 	a.everConnected, a.outage = true, false
 	a.seen(time.Now())
-	a.emitConnection("connected", code, "", sessionInfo)
+	a.emitConnection("connected", code, "", sessionInfo, extra)
 	defer func() {
 		a.mu.Lock()
 		a.opcConnected = false
@@ -213,8 +226,10 @@ func (a *Adapter) session(ctx context.Context) (connected bool, err error) {
 		case err != nil:
 			reason = err.Error()
 		}
-		a.outage = code == status.ConnectionLost
-		a.emitConnection("disconnected", code, reason, sessionInfo)
+		if code == status.ConnectionLost {
+			a.outage, a.outageSince = true, time.Now()
+		}
+		a.emitConnection("disconnected", code, reason, sessionInfo, nil)
 		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = client.Close(closeCtx)
@@ -590,11 +605,11 @@ func NodeGone(code ua.StatusCode) bool {
 
 func (a *Adapter) handleValue(bn *boundNode, dv *ua.DataValue, readAt time.Time) {
 	var raw any
-	status := ua.StatusCode(0)
+	sc := ua.StatusCode(0)
 	var sourceTS, serverTS any
 	var occurredAt string
 	if dv != nil {
-		status = dv.Status
+		sc = dv.Status
 		if dv.Value != nil {
 			raw = dv.Value.Value()
 		}
@@ -631,9 +646,9 @@ func (a *Adapter) handleValue(bn *boundNode, dv *ua.DataValue, readAt time.Time)
 		"data_type":            item.DataType,
 		"value":                value,
 		"value_type":           valueType,
-		"status_code":          fmt.Sprintf("0x%08X", uint32(status)),
-		"status_name":          StatusName(status),
-		"quality":              Quality(status),
+		"status_code":          fmt.Sprintf("0x%08X", uint32(sc)),
+		"status_name":          StatusName(sc),
+		"quality":              Quality(sc),
 		"source_timestamp":     sourceTS,
 		"server_timestamp":     serverTS,
 		"inventory_hash":       fp,
@@ -655,6 +670,9 @@ func (a *Adapter) handleValue(bn *boundNode, dv *ua.DataValue, readAt time.Time)
 	}
 	if len(ctxValues) > 0 {
 		payload["context_values"] = ctxValues
+	}
+	if code := status.Quality(Quality(sc)); code != "" {
+		payload["reason_code"] = code
 	}
 
 	rec := &evidence.Record{
@@ -689,12 +707,15 @@ func (a *Adapter) handleValue(bn *boundNode, dv *ua.DataValue, readAt time.Time)
 	}
 }
 
-func (a *Adapter) emitConnection(state, reasonCode, reason string, session sessionInfo) {
+func (a *Adapter) emitConnection(state, reasonCode, reason string, session sessionInfo, extra map[string]any) {
 	payload := map[string]any{
 		"state":       state,
 		"reason_code": reasonCode,
 		"endpoint":    a.cfg.Source.Endpoint,
 		"session":     session,
+	}
+	for k, v := range extra {
+		payload[k] = v
 	}
 	if reason != "" {
 		payload["reason"] = reason
@@ -718,6 +739,56 @@ func (a *Adapter) emitConnection(state, reasonCode, reason string, session sessi
 	}
 	a.setLastEvent(reasonCode)
 	a.publishHealth("up")
+}
+
+// emitStart writes the first record of every process start. It carries
+// chain_restart and anchor_hash (set by the sealer) and the reason code the
+// catalog assigns to that record: common.restart, or common.state_lost when
+// the chain state is missing although a journal or snapshot already exists.
+func (a *Adapter) emitStart(resumed, priorEvidence bool) error {
+	code, chainState, detail := status.Restart, "resumed", ""
+	switch {
+	case resumed:
+	case priorEvidence:
+		code, chainState = status.StateLost, "lost"
+		detail = "no chain state, but the journal or inventory snapshot already holds records; the new segment is anchored at genesis"
+	default:
+		chainState = "new"
+	}
+	payload := map[string]any{
+		"reason_code":      code,
+		"chain_state":      chainState,
+		"producer_version": a.version,
+		"config_version":   a.cfg.Version,
+		"mapping_hash":     a.mapping.Hash,
+		"endpoint":         a.cfg.Source.Endpoint,
+	}
+	if detail != "" {
+		payload["detail"] = detail
+	}
+	rec := &evidence.Record{
+		EventType: EventBridgeRestarted,
+		Time:      evidence.Time{ReadAt: evidence.FormatTime(time.Now()), Source: evidence.TimeSourceSystem},
+		Actor:     a.actor(),
+		Policy: evidence.Policy{
+			ID:      "config:" + filepath.Base(a.cfg.Path),
+			Version: a.cfg.Revision,
+			Hash:    a.cfg.Version,
+			Kind:    "config",
+		},
+		Payload: payload,
+		Context: a.context(),
+	}
+	if err := a.emit(rec, a.cfg.MQTT.TopicPrefix+"/status"); err != nil {
+		return err
+	}
+	a.setLastEvent(code)
+	return nil
+}
+
+func fileHasData(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.Size() > 0
 }
 
 func (a *Adapter) setLastEvent(code string) {

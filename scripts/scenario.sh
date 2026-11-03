@@ -124,36 +124,36 @@ inventory-change)
   export SCENARIO_REBROWSE_S=5
   start_sim 12
   start_adapter
-  wait_for '"reason_code":"source.inventory.initial"' 1 30 "initial inventory (generation 1)"
+  wait_for '"reason_code":"source.inventory_initial"' 1 30 "initial inventory (generation 1)"
   echo "   the simulator adds BarrelZone07 12 s after start; the adapter re-browses every 5 s"
-  wait_for '"reason_code":"source.inventory.added"' 1 45 "source.inventory.added (generation 2)"
+  wait_for '"reason_code":"source.node_added"' 1 45 "source.node_added (generation 2)"
   sleep 3
   finish
   ;;
 gap)
   start_sim 0
   start_adapter
-  wait_for '"reason_code":"source.connection.established"' 1 30 "session established"
-  wait_for '"reason_code":"source.inventory.initial"' 1 30 "initial inventory"
+  wait_for '"reason_code":"source.connection_established"' 1 30 "session established"
+  wait_for '"reason_code":"source.inventory_initial"' 1 30 "initial inventory"
   sleep 5
   say "stopping the simulator for $GAP_S s"
   stop_pid "$SIM_PID"; SIM_PID=
-  wait_for '"reason_code":"source.connection.lost"' 1 20 "source.connection.lost"
+  wait_for '"reason_code":"source.connection_lost"' 1 20 "source.connection_lost"
   sleep "$GAP_S"
   say "starting the simulator again"
   start_sim 0
-  wait_for '"reason_code":"source.connection.restored"' 1 30 "source.connection.restored"
+  wait_for '"reason_code":"source.connection_restored"' 1 30 "source.connection_restored"
   sleep 4
   finish
   ;;
 restart)
   start_sim 0
   start_adapter
-  wait_for '"reason_code":"source.inventory.initial"' 1 30 "initial inventory"
+  wait_for '"reason_code":"source.inventory_initial"' 1 30 "initial inventory"
   sleep 4
   say "stopping the adapter (SIGTERM) and starting it again"
   stop_pid "$ADAPTER_PID"; ADAPTER_PID=
-  wait_for '"reason_code":"source.connection.closed"' 1 5 "source.connection.closed"
+  wait_for '"reason_code":"source.connection_closed"' 1 5 "source.connection_closed"
   sleep 3
   start_adapter
   wait_for '"chain_restart":true' 2 30 "second chain_restart record (anchor = last chain_hash before the stop)"
@@ -163,7 +163,7 @@ restart)
 tamper)
   start_sim 0
   start_adapter
-  wait_for '"reason_code":"source.inventory.initial"' 1 30 "initial inventory"
+  wait_for '"reason_code":"source.inventory_initial"' 1 30 "initial inventory"
   sleep 5
   finish || die "the untouched journal must verify"
   EDITED=$SCENARIO_DIR/journal/tampered-edit.jsonl

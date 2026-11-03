@@ -21,9 +21,17 @@ marked as preview.
 - `trailsource endpoints`, `trailsource browse [--mapping-out]` and
   `trailsource gen-cert` for connecting a new server
   (`docs/CONNECT_YOUR_SERVER.md`).
-- Reason codes in inventory and connection records (`source.connection.*`,
-  `source.inventory.*`, `common.*`) and `last_event`/`last_seen` in the
-  health payload and the Last Will (`docs/STATUS.md`).
+- Reason codes from the trail-evidence catalog in `payload.reason_code`:
+  `source.connection_established`, `_restored`, `_lost`, `_failed`,
+  `_closed` on connection records; `source.inventory_initial`,
+  `source.node_removed`, `source.node_changed`, `source.node_added` on
+  inventory records; `source.quality_bad` and `source.quality_uncertain` on
+  values of that quality; `common.restart` or `common.state_lost` on the new
+  start record. `last_event`/`last_seen` in the health payload, and
+  `common.will_published` in the Last Will (`docs/STATUS.md`).
+- `source.bridge.restarted`, the first record of every process start, with
+  `chain_restart` and the reason code the catalog assigns to it.
+- `down_ms` on `source.connection_restored` records.
 - Inventory records carry `truncated` and `browse_limits`.
 - Settings `sampling_interval_ms`, `browse_timeout_s`, `application_uri`
   and `server_thumbprint` (pin the server certificate; the session's

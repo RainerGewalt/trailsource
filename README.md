@@ -25,7 +25,7 @@ make scenario-inventory-change
 The simulator adds two nodes at runtime. Every value record names the
 fingerprint and generation of the address space it was read against; the
 change itself is one `source.inventory.changed` record with
-`reason_code: source.inventory.added` and the diff: which nodes, with which
+`reason_code: source.node_added` and the diff: which nodes, with which
 NodeId, data type and access level.
 
 **What has changed since it was recorded?**
@@ -45,13 +45,14 @@ make scenario-gap
 ```
 
 The simulator stops for a few seconds. The adapter records
-`source.connection.lost` with the reason about a second after the last
-value, reconnects, records `source.connection.restored`, and the chain
+`source.connection_lost` with the reason about a second after the last
+value, reconnects, records `source.connection_restored`, and the chain
 continues. The report shows the gap with begin, end and duration.
 
 `make scenario-restart` adds the fourth case: an adapter restart is a
-`chain_restart` record anchored to the last hash before the stop, and
-verification reports it as a notice, not as an error.
+`source.bridge.restarted` record with `common.restart`, anchored to the
+last hash before the stop, and verification reports it as a notice, not as
+an error.
 
 ## Report
 
@@ -69,21 +70,22 @@ restarts, the state at the end, and the verification result.
 Verify   OK: 141 records in 1 stream(s), 0 error(s), 1 notice(s)
 
 Stream plant-a-ext-01-extruder-01-opcua
-  Period    2026-11-03T17:10:33.410Z .. 2026-11-03T17:10:55.563Z (22.153s)
-  At end    source.connection.closed, last seen 2026-11-03T17:10:55.497Z
+  Period    2026-11-03T17:23:39.721Z .. 2026-11-03T17:23:59.958Z (20.237s)
+  At end    source.connection_closed, last seen 2026-11-03T17:23:59.784Z
   Records   141
-    source.value.observed           136
+    source.value.observed           135
     source.connection.changed         4
+    source.bridge.restarted           1
     source.inventory.changed          1
-  Values    28 nodes; quality good 136, uncertain 0, bad 0; without source timestamp 0
+  Values    28 nodes; quality good 135, uncertain 0, bad 0; without source timestamp 0
 
   Address space generations (1)
-    gen 1   seq 1      2026-11-03T17:10:33.430Z  source.inventory.initial   28 nodes  sha256:73e25d33f55e...
+    gen 1   seq 2      2026-11-03T17:23:39.746Z  source.inventory_initial   28 nodes  sha256:73e25d33f55e...
 
   Gaps (1)
-    connection 2026-11-03T17:10:39.437Z .. 2026-11-03T17:10:51.462Z  12.025s
-               source.connection.lost opc connection state Closed
-               last value before the gap: 2026-11-03T17:10:38.434Z
+    connection 2026-11-03T17:23:45.752Z .. 2026-11-03T17:23:55.763Z  10.011s
+               source.connection_lost opc connection state Closed
+               last value before the gap: 2026-11-03T17:23:44.749Z
 ```
 
 `--html` writes one self-contained file without scripts or external
@@ -123,12 +125,14 @@ better choice.
   ExtensionObjects and decoded structures are encoded so that they hash
   identically in every RFC 8785 implementation.
 - Records every session start, loss, failed attempt and orderly stop as
-  `source.connection.changed` with a reason code (`docs/STATUS.md`). The
+  `source.connection.changed` with a reason code from the shared
+  trail-evidence catalog (`docs/STATUS.md`). The
   retained health topic carries the state of the source as `last_event`
   and `last_seen`, and an MQTT Last Will.
 - Seals every record into a per-source hash chain (`seq`, `prev_hash`,
   `content_hash`, `chain_hash`). Sequence numbers survive restarts; the
-  first record after a start carries `chain_restart` and anchors to the
+  first record after a start, `source.bridge.restarted` with
+  `reason_code: common.restart`, carries `chain_restart` and anchors to the
   last persisted hash.
 - Hashes its own configuration into `config_version` with secret keys
   masked, and appends every record to a local JSON Lines journal that

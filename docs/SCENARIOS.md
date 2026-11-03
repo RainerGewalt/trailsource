@@ -39,7 +39,7 @@ Ports are configurable with `SCENARIO_MQTT_PORT` and `SCENARIO_OPC_PORT`
 The simulator adds a seventh barrel zone (two variables) 12 seconds after it
 starts. The adapter re-browses every 5 seconds in this scenario, sees a new
 fingerprint and seals one `source.inventory.changed` record with
-`reason_code: source.inventory.added`, generation 2, and a diff that lists
+`reason_code: source.node_added`, generation 2, and a diff that lists
 the two new nodes with NodeId, browse path, data type and access levels.
 Every value record after it carries the new fingerprint as its
 `addressspace` policy, every value before it the old one.
@@ -48,8 +48,8 @@ What the report shows:
 
 ```
   Address space generations (2)
-    gen 1   seq 1      ...  source.inventory.initial   28 nodes  sha256:73e25d33f55e...
-    gen 2   seq 207    ...  source.inventory.added     30 nodes  sha256:d249a2e98ace...
+    gen 1   seq 2      ...  source.inventory_initial   28 nodes  sha256:73e25d33f55e...
+    gen 2   seq 149    ...  source.node_added          30 nodes  sha256:d249a2e98ace...
             added 2, removed 0, changed 0
             + Plant.Line01.Extruder01.BarrelZone07.TempActualC (float64)
             + Plant.Line01.Extruder01.BarrelZone07.TempSetpointC (float64)
@@ -66,20 +66,21 @@ polls the session state once per second, so the loss is recorded about a
 second after the last value:
 
 1. `source.connection.changed`, `state: disconnected`,
-   `reason_code: source.connection.lost`, `reason` with the error text.
+   `reason_code: source.connection_lost`, `reason` with the error text.
 2. Silent reconnect attempts every 2 seconds (`session_backoff_s`). They are
    not recorded one by one; the outage is already open.
 3. `source.connection.changed`, `state: connected`,
-   `reason_code: source.connection.restored`, then a fresh browse. The
+   `reason_code: source.connection_restored` with `down_ms`, then a fresh
+   browse. The
    fingerprint is unchanged, so no inventory record follows.
 
 The chain continues without a restart: the adapter process never stopped.
 
 ```
   Gaps (1)
-    connection 2026-11-03T16:40:56.418Z .. 2026-11-03T16:41:08.431Z  12.013s
-               source.connection.lost opc connection state Closed
-               last value before the gap: 2026-11-03T16:40:55.412Z
+    connection 2026-11-03T17:23:45.752Z .. 2026-11-03T17:23:55.763Z  10.011s
+               source.connection_lost opc connection state Closed
+               last value before the gap: 2026-11-03T17:23:44.749Z
 ```
 
 The gap is longer than the 8 seconds the simulator was off: the simulator
@@ -90,14 +91,15 @@ before the gap, so the reader can tell detection delay from outage.
 ## restart
 
 The adapter is stopped with SIGTERM and started again three seconds later.
-On the way down it records `source.connection.closed`. On the way up the
-first record carries `chain_restart: true` and `anchor_hash` equal to the
-`chain_hash` of the last record before the stop; `seq` continues where it
-stopped. `trailsource verify` reports the restart as a notice:
+On the way down it records `source.connection_closed`. On the way up the
+first record is `source.bridge.restarted` with `reason_code: common.restart`
+and `chain_state: resumed`; it carries `chain_restart: true` and an
+`anchor_hash` equal to the `chain_hash` of the last record before the stop,
+and `seq` continues where it stopped. `trailsource verify` reports the restart as a notice:
 
 ```
-OK, 120 records, 1 streams
-  notice restart        line=68 seq=67 restart at seq 67, anchor sha256:d0678431b068...
+OK, 122 records, 1 streams
+  notice restart        line=69 seq=68 restart at seq 68, anchor sha256:a9a334ff8694...
 ```
 
 The report lists the restart with its anchor and the time since the

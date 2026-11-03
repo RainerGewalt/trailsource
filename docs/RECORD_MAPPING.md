@@ -17,7 +17,7 @@ Every record is one JSON object (one line in a journal file):
 | `seq` | persistent, strictly increasing by 1; survives restarts |
 | `prev_hash` | `chain_hash` of the previous record; genesis is `sha256:` + 64 zeros |
 | `chain_restart`, `anchor_hash` | present on the first record after a process start; `anchor_hash` is the last persisted `chain_hash` (or genesis) and equals `prev_hash` |
-| `event_type` | `source.value.observed`, `source.inventory.changed`, `source.connection.changed` |
+| `event_type` | `source.value.observed`, `source.inventory.changed`, `source.connection.changed`, `source.bridge.restarted` |
 | `time.recorded_at` | moment of sealing, RFC 3339 UTC, milliseconds |
 | `time.occurred_at` | OPC UA SourceTimestamp (microseconds) when present; absent for Modbus and CIP |
 | `time.read_at` | when the adapter received the value |
@@ -29,8 +29,10 @@ Every record is one JSON object (one line in a journal file):
 | `chain_hash` | `sha256:` + hex over JCS of the core members |
 | `context` | informational, not hashed: site, line, device, protocol, endpoint, `config_version`, mapping file name/version/hash, host |
 
-Inventory and connection records carry `payload.reason_code` from the
-vocabulary in `docs/STATUS.md`.
+Start, inventory and connection records, and values of bad or uncertain
+quality, carry `payload.reason_code` from the trail-evidence catalog; the
+codes TrailSource uses are listed in `docs/STATUS.md`. Event types are not
+reason codes.
 
 Hashes use SHA-256 over RFC 8785 (JCS) bytes. The Go side uses
 `github.com/gowebpki/jcs`, the Python side a stdlib port of the same rules;
@@ -81,6 +83,7 @@ the native type offers.
 | AccessLevel, UserAccessLevel | `access.access_level`, `access.user_access_level`, `access.writable`, `access.user_writable` | what the server allows in general and what it allowed this session |
 | mapping rules with `context: true` | `context_values` | latest values of recipe, order, batch, machine state repeated in every record |
 | | `publish_reason` | `subscription` |
+| `quality` bad or uncertain | `reason_code` | `source.quality_bad` or `source.quality_uncertain`; absent for good values |
 
 ### Value encoding
 
@@ -115,7 +118,7 @@ persisted snapshot (`change_kind: "changed"`).
 
 | Payload field | Content |
 |---|---|
-| `reason_code` | `source.inventory.initial`, `added`, `removed`, `modified` or `mixed` |
+| `reason_code` | `source.inventory_initial`, `source.node_removed`, `source.node_changed` or `source.node_added` (the first that applies; see `docs/STATUS.md`) |
 | `fingerprint`, `previous_fingerprint`, `generation` | `sha256` over sorted `NodeId|BrowseName|DataType` lines; generation increments per change |
 | `truncated`, `browse_limits` | `truncated` is true when `max_nodes` stopped the browse: the inventory is the first `max_nodes` variables in depth-first order, not the whole address space |
 | `node_count`, `nodes` | the full list of Variable nodes with NodeId, browse path, data type, access levels |
@@ -128,12 +131,24 @@ The fingerprint deliberately ignores descriptions and access levels so that
 cosmetic edits do not create a new generation; access level changes are
 still visible in `diff.changed`.
 
+## OPC UA: `source.bridge.restarted`
+
+The first record of every process start, with `chain_restart` and
+`anchor_hash`. Payload: `reason_code` (`common.restart`, or
+`common.state_lost` when the chain state is missing although the journal
+or the inventory snapshot already holds records), `chain_state`
+(`resumed`, `new` or `lost`), `producer_version`, `config_version`,
+`mapping_hash`, `endpoint`. Policy is the configuration, as on connection
+records.
+
 ## OPC UA: `source.connection.changed`
 
 `{state: "connected" | "disconnected", reason_code, endpoint, session, reason?}`
-on the `status` topic. `reason_code` is `source.connection.established`,
-`restored`, `lost`, `failed` or `closed`; `reason` carries the error text
-for `lost` and `failed`. Together with `chain_restart` this makes gaps in
+on the `status` topic, plus `down_ms` on a restored session. `reason_code`
+is `source.connection_established`, `source.connection_restored`,
+`source.connection_lost`, `source.connection_failed` or
+`source.connection_closed`; `reason` carries the error text for `lost` and
+`failed`. Together with `chain_restart` this makes gaps in
 the value stream explainable; `trailsource report` pairs them into gaps
 with begin, end and duration.
 

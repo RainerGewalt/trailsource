@@ -193,7 +193,7 @@ mosquitto_sub -h <broker> -t 'trailsource/+/+/+/health' -v
 
 The retained health message shows the state of the source as
 `last_event` and `last_seen` (see `docs/STATUS.md`):
-`source.connection.established` or `source.inventory.initial` with a
+`source.connection_established` or `source.inventory_initial` with a
 `last_seen` a second old is a source that delivers.
 
 After a few minutes:

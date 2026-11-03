@@ -83,10 +83,10 @@ connect ──> browse ──> reconcile ──> subscribe ──(rebrowse timer
   within one interval even without a reconnect.
 - `loss`: the client state is polled once per second. The stack's own
   reconnect is switched off: a lost session ends with
-  `source.connection.lost` and its reason, and the next session starts
+  `source.connection_lost` and its reason, and the next session starts
   from `connect` after `session_backoff_s`. Failed attempts are recorded
-  once per outage (`source.connection.failed`), not per retry. On shutdown
-  the session ends with `source.connection.closed`.
+  once per outage (`source.connection_failed`), not per retry. On shutdown
+  the session ends with `source.connection_closed`.
 
 ## Emit order
 
@@ -105,9 +105,13 @@ state/<source_id>.inventory.json   last browse snapshot with generation
 journal/<source_id>.jsonl          every record, one per line
 ```
 
-All files are written atomically (temp file and rename). Deleting the chain
-file restarts the stream at `seq 0` with `chain_restart` anchored to
-genesis; the verifier reports this as a restart, not as a break.
+All files are written atomically (temp file and rename). Every process
+start writes `source.bridge.restarted` as its first record, with
+`chain_restart` and `reason_code: common.restart`. Deleting the chain file
+restarts the stream at `seq 0` anchored to genesis; if the journal or the
+inventory snapshot already holds records, that start record says
+`common.state_lost`. The verifier reports both as a restart notice, not as
+a break, as long as the journal does not contain the previous segment.
 
 ## Identity and configuration
 

@@ -275,11 +275,17 @@ func summarise(sid string, entries []entry) Stream {
 				}
 			}
 			s.Restarts = append(s.Restarts, rs)
-			s.LastEvent = status.ChainRestart
+			s.LastEvent = status.Restart
 		}
 
 		switch e.eventType {
-		case status.ValueObserved:
+		case status.EventBridgeRestarted:
+			var c connectionPayload
+			_ = json.Unmarshal(e.payload, &c)
+			if code, ok := status.Canonical(c.ReasonCode); ok {
+				s.LastEvent = code
+			}
+		case status.EventValueObserved:
 			var v valuePayload
 			_ = json.Unmarshal(e.payload, &v)
 			switch v.Quality {
@@ -303,11 +309,11 @@ func summarise(sid string, entries []entry) Stream {
 			if lastValueAt == "" {
 				lastValueAt = e.recordedAt
 			}
-		case "source.connection.changed":
+		case status.EventConnectionChanged:
 			var c connectionPayload
 			_ = json.Unmarshal(e.payload, &c)
-			code := c.ReasonCode
-			if code == "" {
+			code, ok := status.Canonical(c.ReasonCode)
+			if !ok {
 				code = legacyConnectionCode(c)
 			}
 			s.LastEvent = code
@@ -328,7 +334,7 @@ func summarise(sid string, entries []entry) Stream {
 			} else if open.ReasonCode == "" {
 				open.ReasonCode, open.Reason = code, c.Reason
 			}
-		case "source.inventory.changed":
+		case status.EventInventoryChanged:
 			g := generation(e)
 			for _, earlier := range s.Generations {
 				if earlier.Fingerprint == g.Fingerprint && g.Fingerprint != "" {
@@ -365,13 +371,15 @@ func summarise(sid string, entries []entry) Stream {
 func generation(e entry) Generation {
 	var p inventoryPayload
 	_ = json.Unmarshal(e.payload, &p)
-	g := Generation{Generation: p.Generation, Seq: e.seq, Line: e.line, RecordedAt: e.recordedAt, ReasonCode: p.ReasonCode,
+	g := Generation{Generation: p.Generation, Seq: e.seq, Line: e.line, RecordedAt: e.recordedAt,
 		NodeCount: p.NodeCount, Fingerprint: p.Fingerprint, Truncated: p.Truncated,
 		Added: []string{}, Removed: []string{}, Changed: []string{}}
 	if p.PreviousFingerprint != nil {
 		g.PreviousFingerprint = *p.PreviousFingerprint
 	}
-	if g.ReasonCode == "" {
+	if code, ok := status.Canonical(p.ReasonCode); ok {
+		g.ReasonCode = code
+	} else {
 		g.ReasonCode = status.Inventory(p.ChangeKind == "initial", len(p.Diff.Added), len(p.Diff.Removed), len(p.Diff.Changed))
 	}
 	for _, n := range p.Diff.Added {
@@ -406,7 +414,7 @@ func describeNode(n inventoryNode) string {
 }
 
 // legacyConnectionCode derives a reason code for connection records written
-// before reason codes existed.
+// before TrailSource wrote reason codes at all.
 func legacyConnectionCode(c connectionPayload) string {
 	if c.State == "connected" {
 		return status.ConnectionEstablished

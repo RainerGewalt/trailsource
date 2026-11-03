@@ -20,7 +20,7 @@ help:
 	  '  make logs            follow demo logs' \
 	  '' \
 	  'Scenarios (local processes, no Docker; need mosquitto and Python with asyncua):' \
-	  '  make scenario-inventory-change   a node appears at runtime: source.inventory.added with diff' \
+	  '  make scenario-inventory-change   a node appears at runtime: source.node_added with diff' \
 	  '  make scenario-gap                the server goes away and comes back: a gap with duration' \
 	  '  make scenario-restart            the adapter restarts: chain_restart with anchor, a notice' \
 	  '  make scenario-tamper             one value is edited: hash_mismatch, then chain_break' \

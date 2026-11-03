@@ -20,7 +20,7 @@ const fixtureDir = "../../testdata/report"
 
 // fixture builds a small, deterministic journal of one OPC UA stream:
 // start, initial inventory, values, a lost connection that is restored after
-// 15 s, an added node, an orderly stop and a restart 10 s later.
+// 15 s, an added node, a bad value, an orderly stop and a restart 10 s later.
 func fixture(t *testing.T) []byte {
 	t.Helper()
 	t0 := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
@@ -70,6 +70,9 @@ func fixture(t *testing.T) []byte {
 		}
 		return p
 	}
+	start := func(code, chainState string) map[string]any {
+		return map[string]any{"reason_code": code, "chain_state": chainState, "producer_version": producer.Version, "endpoint": ctx["endpoint"]}
+	}
 	value := func(path string, v any, quality string, sourceTS any, gen uint64, fp string) (evidence.Policy, map[string]any) {
 		return evidence.Policy{ID: sid + "/addressspace", Version: itoa(gen), Hash: fp, Kind: "addressspace"},
 			map[string]any{"native_node_id": "ns=2;s=" + path, "entity_key": sid + "/" + strings.ToLower(strings.ReplaceAll(path, ".", "-")),
@@ -77,7 +80,8 @@ func fixture(t *testing.T) []byte {
 	}
 	st := func(at time.Duration) string { return evidence.FormatTimeMicro(t0.Add(at)) }
 
-	emit(0, true, "source.connection.changed", cfgPolicy, conn("connected", status.ConnectionEstablished, ""))
+	emit(0, true, status.EventBridgeRestarted, cfgPolicy, start(status.Restart, "new"))
+	emit(0, false, "source.connection.changed", cfgPolicy, conn("connected", status.ConnectionEstablished, ""))
 	emit(200*time.Millisecond, false, "source.inventory.changed", cfgPolicy, map[string]any{
 		"reason_code": status.InventoryInitial, "change_kind": "initial", "generation": 1, "fingerprint": fp1, "previous_fingerprint": nil,
 		"node_count": len(gen1), "truncated": false, "nodes": gen1, "diff": map[string]any{"added": nil, "removed": nil, "changed": nil}})
@@ -88,16 +92,20 @@ func fixture(t *testing.T) []byte {
 	p, v = value("Plant.Line01.Extruder01.BarrelZone01.TempActualC", 170.2, "good", st(9500*time.Millisecond), 1, fp1)
 	emit(9500*time.Millisecond, false, "source.value.observed", p, v)
 	emit(10*time.Second, false, "source.connection.changed", cfgPolicy, conn("disconnected", status.ConnectionLost, "opc connection state Disconnected"))
-	emit(25*time.Second, false, "source.connection.changed", cfgPolicy, conn("connected", status.ConnectionRestored, ""))
+	restored := conn("connected", status.ConnectionRestored, "")
+	restored["down_ms"] = 15000
+	emit(25*time.Second, false, "source.connection.changed", cfgPolicy, restored)
 	p, v = value("Plant.Line01.Extruder01.MeltPressureBar", 191, "good", st(26*time.Second), 1, fp1)
 	emit(26*time.Second, false, "source.value.observed", p, v)
 	emit(30*time.Second, false, "source.inventory.changed", cfgPolicy, map[string]any{
-		"reason_code": status.InventoryAdded, "change_kind": "changed", "generation": 2, "fingerprint": fp2, "previous_fingerprint": fp1,
+		"reason_code": status.NodeAdded, "change_kind": "changed", "generation": 2, "fingerprint": fp2, "previous_fingerprint": fp1,
 		"node_count": len(gen2), "truncated": false, "nodes": gen2, "diff": map[string]any{"added": []any{added}, "removed": nil, "changed": nil}})
 	p, v = value("Plant.Line01.Extruder01.BarrelZone07.TempActualC", nil, "bad", nil, 2, fp2)
+	v["reason_code"] = status.QualityBad
 	emit(31*time.Second, false, "source.value.observed", p, v)
 	emit(40*time.Second, false, "source.connection.changed", cfgPolicy, conn("disconnected", status.ConnectionClosed, "adapter stopping"))
-	emit(50*time.Second, true, "source.connection.changed", cfgPolicy, conn("connected", status.ConnectionEstablished, ""))
+	emit(50*time.Second, true, status.EventBridgeRestarted, cfgPolicy, start(status.Restart, "resumed"))
+	emit(50*time.Second, false, "source.connection.changed", cfgPolicy, conn("connected", status.ConnectionEstablished, ""))
 	p, v = value("Plant.Line01.Extruder01.MeltPressureBar", 189.9, "good", st(51*time.Second), 2, fp2)
 	emit(51*time.Second, false, "source.value.observed", p, v)
 	return out.Bytes()
@@ -135,20 +143,20 @@ func TestReportSummarisesFixture(t *testing.T) {
 		t.Fatalf("fixture must verify with one stream: %s %+v", r.VerifySummary(), r.Verify.Issues)
 	}
 	s := r.Streams[0]
-	if s.Records != 13 || s.First != "2026-11-02T10:00:00.000Z" || s.Last != "2026-11-02T10:00:51.000Z" || s.Span != "51s" {
+	if s.Records != 15 || s.First != "2026-11-02T10:00:00.000Z" || s.Last != "2026-11-02T10:00:51.000Z" || s.Span != "51s" {
 		t.Fatalf("period/records wrong: %+v", s)
 	}
 	counts := map[string]int{}
 	for _, e := range s.Events {
 		counts[e.EventType] = e.Count
 	}
-	if counts["source.value.observed"] != 6 || counts["source.connection.changed"] != 5 || counts["source.inventory.changed"] != 2 {
+	if counts["source.value.observed"] != 6 || counts["source.connection.changed"] != 5 || counts["source.inventory.changed"] != 2 || counts[status.EventBridgeRestarted] != 2 {
 		t.Fatalf("event counts wrong: %+v", s.Events)
 	}
 	if s.Values.Bad != 1 || s.Values.NoSourceTimestamp != 1 || s.Values.Nodes != 4 {
 		t.Fatalf("value stats wrong: %+v", s.Values)
 	}
-	if len(s.Generations) != 2 || s.Generations[1].ReasonCode != status.InventoryAdded ||
+	if len(s.Generations) != 2 || s.Generations[1].ReasonCode != status.NodeAdded ||
 		len(s.Generations[1].Added) != 1 || s.Generations[1].Added[0] != "Plant.Line01.Extruder01.BarrelZone07.TempActualC (float64)" {
 		t.Fatalf("generations wrong: %+v", s.Generations)
 	}
@@ -206,7 +214,7 @@ func TestReportHTMLIsSelfContained(t *testing.T) {
 	}
 	html := buf.String()
 	for _, want := range []string{"<!doctype html>", "prefers-color-scheme:dark", "width=device-width",
-		"source.inventory.added", "BarrelZone07", "15s", "opc connection state Disconnected", "OK: 13 records"} {
+		"source.node_added", "BarrelZone07", "15s", "opc connection state Disconnected", "OK: 15 records"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("HTML lacks %q", want)
 		}
@@ -235,17 +243,17 @@ func TestReportShowsTamperedJournal(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	_ = r.WriteText(&buf)
-	if !strings.Contains(buf.String(), "error  hash_mismatch  line 8") {
+	if !strings.Contains(buf.String(), "error  hash_mismatch  line 9") {
 		t.Fatalf("text report does not name the tampered line:\n%s", buf.String())
 	}
 }
 
 // A journal that ends with an orderly stop has no open gap; its end state is
-// source.connection.closed. One that ends in an outage has an open gap.
+// source.connection_closed. One that ends in an outage has an open gap.
 func TestReportEndOfJournal(t *testing.T) {
 	raw := loadFixture(t)
 	lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
-	stopped, err := Build("stopped", bytes.Join(lines[:11], []byte("\n")))
+	stopped, err := Build("stopped", bytes.Join(lines[:12], []byte("\n")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +261,7 @@ func TestReportEndOfJournal(t *testing.T) {
 	if len(s.Gaps) != 1 || s.LastEvent != status.ConnectionClosed {
 		t.Fatalf("orderly stop must not be an open gap: %+v %s", s.Gaps, s.LastEvent)
 	}
-	outage, err := Build("outage", bytes.Join(lines[:6], []byte("\n")))
+	outage, err := Build("outage", bytes.Join(lines[:7], []byte("\n")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,16 +276,34 @@ func TestReportNamesRecurringAddressSpace(t *testing.T) {
 	lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
 	// Re-use the fingerprint of generation 1 for generation 2 (verification
 	// is irrelevant here; only the summary is checked).
-	gen2 := bytes.Replace(lines[8], []byte(`"fingerprint":"`+evidence.Sum([]byte("gen2"))+`"`), []byte(`"fingerprint":"`+evidence.Sum([]byte("gen1"))+`"`), 1)
-	if bytes.Equal(gen2, lines[8]) {
-		t.Fatal("fixture line 9 is not the second inventory record")
+	gen2 := bytes.Replace(lines[9], []byte(`"fingerprint":"`+evidence.Sum([]byte("gen2"))+`"`), []byte(`"fingerprint":"`+evidence.Sum([]byte("gen1"))+`"`), 1)
+	if bytes.Equal(gen2, lines[9]) {
+		t.Fatal("fixture line 10 is not the second inventory record")
 	}
-	lines[8] = gen2
+	lines[9] = gen2
 	r, err := Build("recurring", bytes.Join(lines, []byte("\n")))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if g := r.Streams[0].Generations; g[1].SameAs != 1 || g[0].SameAs != 0 {
 		t.Fatalf("recurring fingerprint not named: %+v", g)
+	}
+}
+
+// Journals written before the catalog alignment use provisional names; the
+// report reads them under the catalog names.
+func TestReportReadsProvisionalNames(t *testing.T) {
+	raw := loadFixture(t)
+	for old, now := range status.Provisional() {
+		raw = bytes.ReplaceAll(raw, []byte(`"reason_code":"`+now+`"`), []byte(`"reason_code":"`+old+`"`))
+	}
+	r, err := Build("provisional", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := r.Streams[0]
+	if len(s.Gaps) != 2 || s.Gaps[0].ReasonCode != status.ConnectionLost || s.Gaps[1].Kind != "adapter" ||
+		s.Generations[1].ReasonCode != status.NodeAdded || s.LastEvent != status.ConnectionEstablished {
+		t.Fatalf("provisional names not translated: %+v %+v %s", s.Gaps, s.Generations, s.LastEvent)
 	}
 }

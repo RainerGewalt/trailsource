@@ -11,7 +11,10 @@ Client: TrailSource with the fixes of commit `509b75e` (listed under
 "Fixed because of these runs"), OPC UA stack `github.com/gopcua/opcua`
 v0.9.1, over the public internet from a workstation. Broker: a local
 Mosquitto. Configurations: `configs/interop/milo-demo.yaml` and
-`configs/interop/umati-sample.yaml`.
+`configs/interop/umati-sample.yaml`. The journals of these runs carry the
+provisional reason-code names TrailSource used before it adopted the
+trail-evidence catalog (`source.connection.lost` and so on); this record
+uses the catalog names, and `docs/STATUS.md` maps one to the other.
 
 ### Servers tried
 
@@ -62,18 +65,19 @@ is marked `truncated`.
   without timestamps and were recorded with `source_timestamp: null` and
   `server_timestamp: null`. Bad values are recorded, not dropped.
 - **Reconnect.** Run A: the relay was stopped at 17:08:11.0. The last value
-  arrived at 17:08:10.998, `source.connection.lost` (reason
+  arrived at 17:08:10.998, `source.connection_lost` (reason
   `opc connection state Closed`) was sealed at 17:08:12.097, reconnect
-  attempts every 5 s failed silently, `source.connection.restored` followed
+  attempts every 5 s failed silently, `source.connection_restored` followed
   at 17:08:28.790 after the relay was back, then a fresh browse with the
   unchanged fingerprint and a new subscription. The report shows one gap of
   16.693 s. The chain continued without restart. The health topic went
-  `source.inventory.initial` → `source.connection.lost` with `last_seen`
-  frozen at 17:08:10.998 → `source.connection.restored`.
+  `source.inventory_initial` → `source.connection_lost` with `last_seen`
+  frozen at 17:08:10.998 → `source.connection_restored`.
 - **Address-space change on a real server.** Run C: the umati server
   creates and deletes production jobs while it runs. Four generations were
-  recorded: initial; `source.inventory.mixed` (a job's 8 nodes removed, 8
-  other nodes moved into the 50-node window); `mixed` again with the same
+  recorded: initial; a mixed change (a job's 8 nodes removed, 8 other
+  nodes moved into the 50-node window; recorded then as
+  `source.inventory.mixed`, now `source.node_removed`); `mixed` again with the same
   fingerprint as generation 1; and a fourth seven seconds later, triggered
   by a monitored node reporting `BadNodeIdUnknown` instead of waiting for
   the 60 s re-browse interval.

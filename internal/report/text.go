@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/RainerGewalt/trailsource/internal/evidence"
+	"github.com/RainerGewalt/trailsource/internal/status"
 )
 
 // maxListed bounds the node lists and findings printed per section; the JSON
@@ -58,7 +59,7 @@ func (r *Report) WriteText(w io.Writer) error {
 		}
 		for _, g := range s.Generations {
 			fmt.Fprintf(&b, "    gen %-3d seq %-6d %s  %-26s %d nodes  %s\n", g.Generation, g.Seq, g.RecordedAt, g.ReasonCode, g.NodeCount, ShortHash(g.Fingerprint))
-			if g.ReasonCode != "source.inventory.initial" {
+			if g.ReasonCode != status.InventoryInitial {
 				fmt.Fprintf(&b, "            added %d, removed %d, changed %d\n", len(g.Added), len(g.Removed), len(g.Changed))
 			}
 			if g.SameAs != 0 {
