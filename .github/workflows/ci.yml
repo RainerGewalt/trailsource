@@ -33,7 +33,8 @@ jobs:
         run: |
           python -m py_compile adapters/modbus/main.py adapters/ethernetip/main.py \
             adapters/pylib/trailsource_adapter/runtime.py \
-            sim/opcua/main.py sim/modbus/main.py sim/ethernetip/main.py
+            sim/opcua/main.py sim/modbus/main.py sim/ethernetip/main.py \
+            scripts/tamper.py scripts/tcp_relay.py
       - name: unit tests (stdlib only)
         run: cd adapters/pylib && python -m unittest discover -s tests -t . -v
 

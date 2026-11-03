@@ -5,6 +5,63 @@ Keep a Changelog; versions follow Semantic Versioning.
 
 ## [Unreleased]
 
+The 0.1 gate is OPC UA only. The Modbus TCP and EtherNet/IP adapters are
+marked as preview.
+
+### Added
+
+- Four scenario demos as make targets (`scenario-inventory-change`,
+  `scenario-gap`, `scenario-restart`, `scenario-tamper`, `scenarios`) that
+  run the simulator, Mosquitto and the adapter as local processes, then
+  verify and report (`scripts/scenario.sh`, `docs/SCENARIOS.md`).
+- `trailsource report <journal> [--html out.html] [--json]`: period,
+  records per event type, value quality, address-space generations with
+  diff, gaps with begin, end, duration and reason, restarts, state at the
+  end, verification result. The HTML file is self-contained.
+- `trailsource endpoints`, `trailsource browse [--mapping-out]` and
+  `trailsource gen-cert` for connecting a new server
+  (`docs/CONNECT_YOUR_SERVER.md`).
+- Reason codes in inventory and connection records (`source.connection.*`,
+  `source.inventory.*`, `common.*`) and `last_event`/`last_seen` in the
+  health payload and the Last Will (`docs/STATUS.md`).
+- Inventory records carry `truncated` and `browse_limits`.
+- Settings `sampling_interval_ms`, `browse_timeout_s`, `application_uri`
+  and `server_thumbprint` (pin the server certificate; the session's
+  thumbprint is recorded).
+- Interoperability record against the Eclipse Milo demo server and the
+  umati Sample-Server (`docs/INTEROP.md`, `configs/interop/`,
+  `scripts/tcp_relay.py`).
+
+### Changed
+
+- `trailsource verify` reports the finding classes of the Trail Evidence
+  Record specification (`hash_mismatch`, `chain_break`, `seq_gap`,
+  `schema_invalid`, notice `restart`) and recomputes `chain_hash` with the
+  recomputed `content_hash`, like the reference verifier.
+- The browse batches its requests per group of siblings: 101 nodes over the
+  internet in 5 s instead of 65 s, with unchanged traversal and
+  fingerprints.
+- The OPC UA stack no longer reconnects on its own. A lost session is
+  recorded, detected within a second, and followed by a new session with a
+  fresh browse.
+- `sampling_interval_ms` defaults to the subscription interval instead of
+  the server's fastest rate.
+- A monitored node that the server deletes triggers a re-browse.
+- Guid, XmlElement, ExpandedNodeId, DataValue, Variant, ExtensionObject,
+  enumerations and decoded structures are encoded as JSON under the JCS
+  rules; all builtin data types have short names; QualifiedName keeps its
+  namespace index.
+
+### Fixed
+
+- A re-browse on a dying session sealed an empty inventory as a new
+  generation with every node removed. A browse with an unreadable root or a
+  connection error is now discarded.
+- An unknown browse root produced an empty inventory instead of an error.
+- `source.connection.changed` records for a lost session carried no reason.
+- A node deleted between Browse and Read entered the inventory without a
+  data type.
+
 ## [0.1.0] - 2026-11-02
 
 ### Added

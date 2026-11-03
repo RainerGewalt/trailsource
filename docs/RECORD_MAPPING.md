@@ -29,6 +29,9 @@ Every record is one JSON object (one line in a journal file):
 | `chain_hash` | `sha256:` + hex over JCS of the core members |
 | `context` | informational, not hashed: site, line, device, protocol, endpoint, `config_version`, mapping file name/version/hash, host |
 
+Inventory and connection records carry `payload.reason_code` from the
+vocabulary in `docs/STATUS.md`.
+
 Hashes use SHA-256 over RFC 8785 (JCS) bytes. The Go side uses
 `github.com/gowebpki/jcs`, the Python side a stdlib port of the same rules;
 both reproduce `testdata/vectors.json` byte for byte.
@@ -67,7 +70,7 @@ the native type offers.
 | derived from source id + browse path | `entity_key` | `<source_id>/<lowercase path with non-alphanumerics as "-">`; stable across NodeId changes as long as the path is stable |
 | mapping file rule | `semantic_role`, `semantic_role_source` | `mapping` when a rule matched, `derived` (snake_case of the BrowseName) otherwise |
 | DataType attribute | `data_type` | builtin types as short names (`float64`, `int16`, ...), others as NodeId |
-| Value | `value`, `value_type` | `Float`/`Double` as JSON numbers, `Int64`/`UInt64` as decimal strings (see Numbers), DateTime as RFC 3339, ByteString as base64, arrays as arrays |
+| Value | `value`, `value_type` | see "Value encoding" below |
 | mapping `scale_decimals` | `scale_decimals`, `engineering_value` | for PLC-style scaled integers: raw `2135` with 1 decimal gives `"213.5"` |
 | mapping `unit` | `unit` | UN/CEFACT Rec. 20 code where available |
 | StatusCode | `status_code` (hex), `status_name`, `quality` | `quality` is `good`, `uncertain` or `bad` from the top bits |
@@ -79,6 +82,31 @@ the native type offers.
 | mapping rules with `context: true` | `context_values` | latest values of recipe, order, batch, machine state repeated in every record |
 | | `publish_reason` | `subscription` |
 
+### Value encoding
+
+| OPC UA type | `value` | `value_type` |
+|---|---|---|
+| Boolean, SByte to UInt32 | JSON boolean or integer | `bool`, `int8` ... `uint32` |
+| Int64, UInt64 | decimal string (see Numbers) | `int64`, `uint64` |
+| Float, Double | JSON number, NaN and infinities as `null` | `float32`, `float64` |
+| String, XmlElement | string | `string`, `xmlelement` |
+| DateTime | RFC 3339 UTC string | `datetime` |
+| ByteString | base64 | `bytestring` |
+| Guid | `72962B91-FA75-...` | `guid` |
+| NodeId, ExpandedNodeId | string form; ExpandedNodeId with `nsu=` and `svr=` when present | `nodeid`, `expandednodeid` |
+| StatusCode | `0x` + 8 hex digits | `statuscode` |
+| QualifiedName | `name`, or `ns:name` when the namespace index is not 0 | `qualifiedname` |
+| LocalizedText | the text (locale dropped) | `localizedtext` |
+| Variant (BaseDataType) | the inner value | the inner type, `variant<...>` inside arrays |
+| DataValue | `{value, value_type, status_code, source_timestamp, server_timestamp}` | `datavalue` |
+| ExtensionObject | `{type_id, body}` with the decoded structure walked field by field under these same rules, or `{type_id, body_base64}` when the stack cannot decode it. `type_id` is the encoding NodeId as transmitted. | `extensionobject` |
+| Enumeration | the integer; names are not resolved | `int32` (`data_type` names the enumeration's NodeId) |
+| Arrays, matrices | JSON arrays, nested for matrices | `array<...>` |
+
+`data_type` uses short names for all builtin types (`guid`,
+`structure`, `variant`, `integer`, ...) and the NodeId for every other
+type.
+
 ## OPC UA: `source.inventory.changed`
 
 Emitted on the first browse of a source (no persisted snapshot,
@@ -87,11 +115,13 @@ persisted snapshot (`change_kind: "changed"`).
 
 | Payload field | Content |
 |---|---|
+| `reason_code` | `source.inventory.initial`, `added`, `removed`, `modified` or `mixed` |
 | `fingerprint`, `previous_fingerprint`, `generation` | `sha256` over sorted `NodeId|BrowseName|DataType` lines; generation increments per change |
+| `truncated`, `browse_limits` | `truncated` is true when `max_nodes` stopped the browse: the inventory is the first `max_nodes` variables in depth-first order, not the whole address space |
 | `node_count`, `nodes` | the full list of Variable nodes with NodeId, browse path, data type, access levels |
 | `diff.added`, `diff.removed`, `diff.changed` | keyed by NodeId; `changed` lists field, old and new value for browse name, data type, browse path and access levels |
 | `namespaces` | the server's NamespaceArray at browse time |
-| `session` | `auth`, `security_policy`, `security_mode`, `server_uri` of the session that saw this address space |
+| `session` | `auth`, `security_policy`, `security_mode`, `server_uri` and, for secured sessions, `server_certificate_thumbprint` (SHA-1) of the session that saw this address space |
 | `endpoint`, `browse_roots` | |
 
 The fingerprint deliberately ignores descriptions and access levels so that
@@ -100,11 +130,14 @@ still visible in `diff.changed`.
 
 ## OPC UA: `source.connection.changed`
 
-`{state: "connected" | "disconnected", endpoint, session, reason?}` on the
-`status` topic. Together with `chain_restart` this makes gaps in the value
-stream explainable.
+`{state: "connected" | "disconnected", reason_code, endpoint, session, reason?}`
+on the `status` topic. `reason_code` is `source.connection.established`,
+`restored`, `lost`, `failed` or `closed`; `reason` carries the error text
+for `lost` and `failed`. Together with `chain_restart` this makes gaps in
+the value stream explainable; `trailsource report` pairs them into gaps
+with begin, end and duration.
 
-## Modbus TCP: `source.value.observed`
+## Modbus TCP: `source.value.observed` (preview)
 
 | Modbus | Payload field | Notes |
 |---|---|---|
@@ -117,7 +150,7 @@ stream explainable.
 | | `source_timestamp`, `server_timestamp` | always `null`; Modbus has none, and that absence is information |
 | point list hash | `inventory_hash` | `policy{kind: "addressspace"}` is the hash of the configured point list |
 
-## EtherNet/IP (shim driver): `source.value.observed`
+## EtherNet/IP (shim driver): `source.value.observed` (preview)
 
 | CIP | Payload field | Notes |
 |---|---|---|
@@ -137,11 +170,15 @@ controller generation and belongs in a transform stage, not in the adapter.
 ## Verification
 
 `trailsource verify <journal>` checks, per stream and in `seq` order:
-schema, recomputed `content_hash`, recomputed `chain_hash`, linkage of
-`prev_hash` (or `anchor_hash` on restart) and `seq` continuity. Restarts are
-reported as information when the previous segment is absent or the anchor
-matches its last `chain_hash`; a restart whose anchor contradicts the
-previous segment in the same journal is a break. Gaps and hash mismatches
-are reported as separate failure kinds. Any break sets a non-zero exit code.
+schema, recomputed `content_hash`, recomputed `chain_hash` (over the core
+with the recomputed `content_hash`), linkage of `prev_hash` (or
+`anchor_hash` on restart) and `seq` continuity. Findings use the classes of
+the specification: `hash_mismatch`, `chain_break`, `seq_gap` and
+`schema_invalid` are errors, `restart` is a notice. A restart is a notice
+when the previous segment is absent or the anchor matches its last
+`chain_hash`; a restart whose anchor contradicts the previous segment in the
+same journal is a `chain_break`. Any error sets a non-zero exit code. An
+edited payload fails both hashes of its own line; a re-sealed edit breaks
+the link of the following line (`docs/SCENARIOS.md`, tamper).
 Journals written by TrailSource also verify with the `trail-evidence`
 reference verifier, which applies the same rules.
