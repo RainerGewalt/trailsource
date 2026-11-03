@@ -78,7 +78,7 @@ type Generation struct {
 
 // Gap is a period without data from the source.
 type Gap struct {
-	Kind           string `json:"kind"` // "connection" or "adapter"
+	Kind           string `json:"kind"` // "connection", "adapter" or "subscription" (declared by a source.data.gap record)
 	Begin          string `json:"begin"`
 	End            string `json:"end,omitempty"`
 	Duration       string `json:"duration"`
@@ -331,6 +331,24 @@ func summarise(sid string, entries []entry) Stream {
 			} else if open.ReasonCode == "" {
 				open.ReasonCode, open.Reason = code, c.Reason
 			}
+		case status.EventSubscriptionChanged:
+			var c connectionPayload
+			_ = json.Unmarshal(e.payload, &c)
+			if code, ok := status.Canonical(c.ReasonCode); ok {
+				s.LastEvent = code
+			}
+		case status.EventDataGap:
+			// The producer declares the interval itself; the session stayed.
+			var g struct {
+				From  string `json:"from"`
+				To    string `json:"to"`
+				Cause string `json:"cause"`
+			}
+			_ = json.Unmarshal(e.payload, &g)
+			s.Gaps = append(s.Gaps, Gap{Kind: "subscription", Begin: g.From, End: g.To, Duration: between(g.From, g.To),
+				ReasonCode: g.Cause, Reason: "declared by the producer (common.gap): values in this interval were not observed",
+				BeginSeq: e.seq, EndSeq: e.seq})
+			s.LastEvent = status.Gap
 		case status.EventInventoryChanged:
 			g := generation(e)
 			for _, earlier := range s.Generations {

@@ -235,6 +235,12 @@ journal or state files. Adjust until the list is the data you want:
   otherwise never noticed; with this check it ends as
   `source.connection_lost` within `liveness_interval_s` plus
   `request_timeout_s`.
+- `keepalive_interval_s` (default 10): the keep-alive period requested for
+  the subscription (as MaxKeepAliveCount). When neither data nor a
+  keep-alive arrives within the server's revised count times its revised
+  publishing interval, times 1.5, while the session still answers, the
+  adapter records `source.subscription_stalled`, rebuilds the subscription
+  and, once data flows again, declares the interval with `common.gap`.
 
 Each variable's `entity_key` (its identity downstream) is derived from its
 browse path below the root. It stays the same when the server only

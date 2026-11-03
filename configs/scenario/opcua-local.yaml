@@ -28,6 +28,7 @@ source:
   session_backoff_s: ${SCENARIO_BACKOFF_S}
   request_timeout_s: 5
   liveness_interval_s: ${SCENARIO_LIVENESS_S}
+  keepalive_interval_s: ${SCENARIO_KEEPALIVE_S}
 
 mqtt:
   broker: tcp://127.0.0.1:${SCENARIO_MQTT_PORT}

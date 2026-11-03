@@ -11,10 +11,12 @@ package status
 
 // Event types. They stay coarse: one per kind of record.
 const (
-	EventValueObserved     = "source.value.observed"
-	EventInventoryChanged  = "source.inventory.changed"
-	EventConnectionChanged = "source.connection.changed"
-	EventBridgeRestarted   = "source.bridge.restarted" // first record of every process start
+	EventValueObserved       = "source.value.observed"
+	EventInventoryChanged    = "source.inventory.changed"
+	EventConnectionChanged   = "source.connection.changed"
+	EventBridgeRestarted     = "source.bridge.restarted"     // first record of every process start
+	EventSubscriptionChanged = "source.subscription.changed" // the publish cycle stalled
+	EventDataGap             = "source.data.gap"             // the producer declares an interval it did not observe
 )
 
 // Reason codes, catalog names.
@@ -25,6 +27,7 @@ const (
 	ConnectionFailed      = "source.connection_failed"      // a connect attempt failed (once per outage)
 	ConnectionClosed      = "source.connection_closed"      // the adapter closed the session on shutdown
 	CertificateRejected   = "source.certificate_rejected"   // the server certificate failed the trust list or the pin
+	SubscriptionStalled   = "source.subscription_stalled"   // no data and no keep-alive within the keep-alive window
 
 	InventoryInitial = "source.inventory_initial" // first browse, no persisted snapshot
 	NodeAdded        = "source.node_added"        // nodes appeared
@@ -37,14 +40,16 @@ const (
 	Restart       = "common.restart"        // process start, new segment anchored at the last known chain_hash
 	StateLost     = "common.state_lost"     // process start without the previous chain state although evidence exists
 	WillPublished = "common.will_published" // broker published the Last Will: the adapter vanished
+	Gap           = "common.gap"            // a declared interval without observations (source.data.gap)
 )
 
 // Codes lists every reason code TrailSource writes, in documentation order.
 var Codes = []string{
 	ConnectionEstablished, ConnectionRestored, ConnectionLost, ConnectionFailed, ConnectionClosed, CertificateRejected,
+	SubscriptionStalled,
 	InventoryInitial, NodeAdded, NodeRemoved, NodeChanged,
 	QualityUncertain, QualityBad,
-	Restart, StateLost, WillPublished,
+	Restart, StateLost, WillPublished, Gap,
 }
 
 // provisional maps the names TrailSource used before it adopted the catalog

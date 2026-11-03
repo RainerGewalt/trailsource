@@ -307,3 +307,29 @@ func TestReportReadsProvisionalNames(t *testing.T) {
 		t.Fatalf("provisional names not translated: %+v %+v %s", s.Gaps, s.Generations, s.LastEvent)
 	}
 }
+
+// A source.data.gap record is shown as a gap of kind subscription with the
+// interval the producer declared.
+func TestReportShowsDeclaredGap(t *testing.T) {
+	raw := loadFixture(t)
+	lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
+	// Re-label the value record on line 9 as a declared gap; verification
+	// is irrelevant for the summary.
+	line := lines[8]
+	line = bytes.Replace(line, []byte(`"event_type":"source.value.observed"`), []byte(`"event_type":"source.data.gap"`), 1)
+	line = bytes.Replace(line, []byte(`"payload":{`), []byte(`"payload":{"from":"2026-11-02T10:00:26.000Z","to":"2026-11-02T10:00:29.500Z","cause":"source.subscription_stalled","reason_code":"common.gap",`), 1)
+	lines[8] = line
+	r, err := Build("declared", bytes.Join(lines, []byte("\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found *Gap
+	for i, g := range r.Streams[0].Gaps {
+		if g.Kind == "subscription" {
+			found = &r.Streams[0].Gaps[i]
+		}
+	}
+	if found == nil || found.Duration != "3.5s" || found.ReasonCode != status.SubscriptionStalled {
+		t.Fatalf("declared gap not reported: %+v", r.Streams[0].Gaps)
+	}
+}

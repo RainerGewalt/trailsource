@@ -89,6 +89,16 @@ connect ──> browse ──> reconcile ──> subscribe ──(rebrowse timer
   replaced the subscription; against the simulator a replacement
   subscription sometimes stayed silent for seconds, and every node's value
   was sent again.)
+- `stall`: every subscription also monitors `ServerStatus.CurrentTime`
+  (never recorded), so each publishing interval carries data; gopcua does
+  not pass keep-alive responses on. No publish response within the
+  revised MaxKeepAliveCount times the revised publishing interval, times
+  1.5, means the publish cycle stalled although the session answers: a
+  `source.subscription.changed` record (`source.subscription_stalled`), a
+  new subscription created before the old one is deleted (so gopcua never
+  pauses its publish loop), all monitored items re-added, and a
+  `source.data.gap` record (`common.gap`) with the interval once data flows
+  again.
 - `loss`: the client state is polled once per second. The stack's own
   reconnect is switched off: a lost session ends with
   `source.connection_lost` and its reason, and the next session starts

@@ -18,6 +18,8 @@ lifecycle event plus the time it was last seen.
 | `source.connection.changed` | `status` | A session to the server opens, ends, or cannot be opened. |
 | `source.inventory.changed` | `inventory` | The first browse, and every browse whose fingerprint differs from the persisted snapshot. |
 | `source.value.observed` | `values` | Every data change of a monitored node. |
+| `source.subscription.changed` | `status` | The publish cycle stalled while the session stayed (keep-alive supervision). |
+| `source.data.gap` | `status` | The adapter declares an interval in which it observed nothing, once data flows again. |
 
 Event types are not reason codes and never appear in `payload.reason_code`.
 
@@ -44,6 +46,20 @@ joined by underscores). The severity is the catalog's.
 | `source.connection_failed` | `disconnected` | error | A connect attempt failed. Recorded once per outage: on a start against an unreachable server, never while a `lost` record already opened the outage. Retries stay silent until a session is restored. |
 | `source.connection_closed` | `disconnected` | info | The adapter closed the session because it is stopping. |
 | `source.certificate_rejected` | `disconnected` | error | The server certificate failed the trust list or the pin (`payload.check`: `untrusted`, `expired`, `not_yet_valid`, `revoked`, `revocation_unknown`, `uri_mismatch`, `pin_mismatch`, `unparsable`, `no_certificate`). `payload.certificate_thumbprint` and `payload.rejected_file` name the certificate, which was copied to `<pki>/rejected/`. Recorded once per outage and certificate; nothing is read until an administrator moves the certificate to `<pki>/trusted/certs`. |
+
+### On `source.subscription.changed` and `source.data.gap`
+
+| Code | Event type | Severity | When |
+|---|---|---|---|
+| `source.subscription_stalled` | `source.subscription.changed` | error | No publish response (neither data nor keep-alive) within the keep-alive window: the server's revised MaxKeepAliveCount times its revised publishing interval, times 1.5, at least 2 s. The session still answers (otherwise the record would be `source.connection_lost`). `payload.last_publish_at` is the last response before the silence. The adapter creates a new subscription, deletes the old one and re-adds every monitored item; while the silence lasts it repeats that every window without further records. |
+| `common.gap` | `source.data.gap` | error | Written when data flows again: `payload.from` (last publish response before the stall) and `payload.to` (first one after it) bound the interval in which values were not observed, `payload.cause` is `source.subscription_stalled`. The journal itself is complete; verification is not affected. |
+
+Requested keep-alive period: `keepalive_interval_s` (default 10 s), sent as
+MaxKeepAliveCount in publishing intervals. The OPC UA stack TrailSource uses
+does not pass keep-alive responses on, so every subscription also monitors
+`ServerStatus.CurrentTime`: each publishing interval then carries data, and
+the absence of any publish response is visible. That item is never
+recorded as a value.
 
 ### On `source.inventory.changed`
 
@@ -84,7 +100,8 @@ TrailSource describes the state of a source with two values:
 
 - `last_event`: the reason code of the most recent lifecycle record the
   adapter sealed for that source (`source.bridge.restarted`,
-  `source.connection.changed`, `source.inventory.changed`). Value records,
+  `source.connection.changed`, `source.inventory.changed`,
+  `source.subscription.changed`, `source.data.gap`). Value records,
   including bad ones, do not overwrite it.
 - `last_seen`: when the source last answered, as RFC 3339 UTC with
   milliseconds. A received value, a completed browse and an established
@@ -131,8 +148,9 @@ verifier does not look at reason codes at all.
 
 `source.connection_established`, `source.connection_failed`,
 `source.connection_closed`, `source.certificate_rejected`,
-`source.node_changed` and `common.will_published` were added to the
-catalog for TrailSource; the other codes were already there.
+`source.subscription_stalled`, `source.node_changed` and
+`common.will_published` were added to the catalog for TrailSource; the
+other codes were already there.
 
 ## Preview adapters
 

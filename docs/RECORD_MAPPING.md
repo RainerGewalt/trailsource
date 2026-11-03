@@ -17,7 +17,7 @@ Every record is one JSON object (one line in a journal file):
 | `seq` | persistent, strictly increasing by 1; survives restarts. Written as a canonical decimal string (`"0"`, `"1"`, ... no sign, no leading zeros, uint64 range) so that no JSON implementation rounds it. Journals written before this rule carry a JSON integer; `trailsource verify` accepts them with the notice `legacy_integer_seq` |
 | `prev_hash` | `chain_hash` of the previous record; genesis is `sha256:` + 64 zeros |
 | `chain_restart`, `anchor_hash` | present on the first record after a process start; `anchor_hash` is the last persisted `chain_hash` (or genesis) and equals `prev_hash` |
-| `event_type` | `source.value.observed`, `source.inventory.changed`, `source.connection.changed`, `source.bridge.restarted` |
+| `event_type` | `source.value.observed`, `source.inventory.changed`, `source.connection.changed`, `source.bridge.restarted`, `source.subscription.changed`, `source.data.gap` |
 | `time.recorded_at` | moment of sealing, RFC 3339 UTC, milliseconds |
 | `time.occurred_at` | OPC UA SourceTimestamp (microseconds) when present; absent for Modbus and CIP |
 | `time.read_at` | when the adapter received the value |
@@ -197,6 +197,20 @@ or the inventory snapshot already holds records), `chain_state`
 (`resumed`, `new` or `lost`), `producer_version`, `config_version`,
 `mapping_hash`, `endpoint`. Policy is the configuration, as on connection
 records.
+
+## OPC UA: `source.subscription.changed` and `source.data.gap`
+
+`source.subscription.changed`: `{state: "stalled", reason_code:
+"source.subscription_stalled", subscription_id, last_publish_at,
+detected_at, keepalive_window_ms, revised_publishing_interval_ms,
+revised_max_keepalive_count}`, once per stall.
+
+`source.data.gap`: `{reason_code: "common.gap", from, to, duration_ms,
+cause: "source.subscription_stalled", subscription_id}`, written when data
+flows again; `from` is the last publish response before the stall, `to`
+the first after it. Both on the `status` topic, policy as on connection
+records. `trailsource report` lists the interval as a gap of kind
+`subscription`.
 
 ## OPC UA: `source.connection.changed`
 

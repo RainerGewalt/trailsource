@@ -36,10 +36,12 @@ import (
 
 // Event types emitted by this adapter (see internal/status).
 const (
-	EventValueObserved     = status.EventValueObserved
-	EventInventoryChanged  = status.EventInventoryChanged
-	EventConnectionChanged = status.EventConnectionChanged
-	EventBridgeRestarted   = status.EventBridgeRestarted
+	EventValueObserved       = status.EventValueObserved
+	EventInventoryChanged    = status.EventInventoryChanged
+	EventConnectionChanged   = status.EventConnectionChanged
+	EventBridgeRestarted     = status.EventBridgeRestarted
+	EventSubscriptionChanged = status.EventSubscriptionChanged
+	EventDataGap             = status.EventDataGap
 )
 
 // Adapter holds the runtime of one OPC UA source.
@@ -258,7 +260,7 @@ func (a *Adapter) session(ctx context.Context) (connected bool, err error) {
 	// monitored items that differ: creating a new subscription each time
 	// left some servers' publish cycle silent for a whole interval and sent
 	// every value again.
-	mon, err := newMonitor(ctx, client, a.cfg.SubscriptionInterval())
+	mon, err := newMonitor(ctx, client, a.cfg.SubscriptionInterval(), a.cfg.KeepAliveCount())
 	if err != nil {
 		return true, fmt.Errorf("create subscription: %w", err)
 	}
@@ -271,7 +273,7 @@ func (a *Adapter) session(ctx context.Context) (connected bool, err error) {
 	if err := a.syncMonitor(ctx, mon, nodes); err != nil {
 		return true, err
 	}
-	dead, err = a.watch(ctx, client, sessionInfo, mon)
+	dead, err = a.watch(ctx, client, sessionInfo, mon, nodes)
 	return true, err
 }
 
@@ -526,7 +528,7 @@ func (a *Adapter) setInventory(fp string, gen uint64) {
 // rebrowse_interval_s (sooner after a deleted node) in a goroutine, so
 // notifications keep flowing during a long browse, and then adjusts the
 // monitored items. dead reports that the connection is gone.
-func (a *Adapter) watch(ctx context.Context, client *opcua.Client, info sessionInfo, mon *monitor) (dead bool, err error) {
+func (a *Adapter) watch(ctx context.Context, client *opcua.Client, info sessionInfo, mon *monitor, nodes []VariableNode) (dead bool, err error) {
 	type browseResult struct {
 		nodes []VariableNode
 		err   error
@@ -544,6 +546,10 @@ func (a *Adapter) watch(ctx context.Context, client *opcua.Client, info sessionI
 	defer rebrowse.Stop()
 	lastBrowse := time.Now()
 	rebrowseSoon := false
+	// A stalled publish cycle: the time of the last publish response before
+	// it, kept until data flows again and the gap can be declared.
+	var stalledSince time.Time
+	stalled := false
 	// A dead server does not always close the notification channel; the
 	// client state does change, so it is polled once per second. A
 	// half-open connection (socket open, nothing arrives) changes neither,
@@ -575,11 +581,30 @@ func (a *Adapter) watch(ctx context.Context, client *opcua.Client, info sessionI
 			if err := a.syncMonitor(ctx, mon, r.nodes); err != nil {
 				return IsConnectionError(err), err
 			}
+			nodes = r.nodes
 			lastBrowse, rebrowseSoon = time.Now(), false
 			rebrowse.Reset(a.cfg.RebrowseInterval())
 		case <-stateCheck.C:
 			if st := client.State(); st != opcua.Connected {
 				return true, fmt.Errorf("opc connection state %s", st)
+			}
+			if now := time.Now(); mon.stalled(now) {
+				// Neither data nor keep-alive within the window, while the
+				// session itself is still there: record it once per stall,
+				// rebuild the subscription, and declare the gap when data
+				// flows again.
+				if !stalled {
+					stalled, stalledSince = true, mon.lastPublish
+					a.emitStall(mon, now)
+				}
+				oldID := mon.sub.SubscriptionID
+				if err := mon.rebuild(ctx); err != nil {
+					return IsConnectionError(err), fmt.Errorf("rebuild stalled subscription: %w", err)
+				}
+				log.Printf("subscription %d stalled (no publish response for %s), replaced by %d", oldID, now.Sub(stalledSince).Round(time.Millisecond), mon.sub.SubscriptionID)
+				if err := a.syncMonitor(ctx, mon, nodes); err != nil {
+					return IsConnectionError(err), err
+				}
 			}
 		case <-liveness.C:
 			if err := a.checkLiveness(ctx, client); err != nil {
@@ -595,6 +620,12 @@ func (a *Adapter) watch(ctx context.Context, client *opcua.Client, info sessionI
 			if n.Error != nil {
 				return false, fmt.Errorf("opc notification: %w", n.Error)
 			}
+			now := time.Now()
+			mon.lastPublish = now
+			if stalled {
+				stalled = false
+				a.emitGap(stalledSince, now, status.SubscriptionStalled, mon.sub.SubscriptionID)
+			}
 			dcn, isDCN := n.Value.(*ua.DataChangeNotification)
 			if !isDCN {
 				continue
@@ -602,6 +633,9 @@ func (a *Adapter) watch(ctx context.Context, client *opcua.Client, info sessionI
 			readAt := time.Now()
 			a.seen(readAt)
 			for _, item := range dcn.MonitoredItems {
+				if item.ClientHandle == heartbeatHandle {
+					continue // proves the publish cycle, is not a value of the source
+				}
 				bn, known := mon.byHandle[item.ClientHandle]
 				if !known {
 					continue // removed by the last re-browse
@@ -787,6 +821,56 @@ func (a *Adapter) emitConnection(state, reasonCode, reason string, session sessi
 		return
 	}
 	a.setLastEvent(reasonCode)
+	a.publishHealth("up")
+}
+
+// emitStall records that the publish cycle went silent.
+func (a *Adapter) emitStall(mon *monitor, now time.Time) {
+	payload := map[string]any{
+		"state":                          "stalled",
+		"reason_code":                    status.SubscriptionStalled,
+		"subscription_id":                mon.sub.SubscriptionID,
+		"last_publish_at":                evidence.FormatTime(mon.lastPublish),
+		"detected_at":                    evidence.FormatTime(now),
+		"keepalive_window_ms":            mon.window.Milliseconds(),
+		"revised_publishing_interval_ms": mon.sub.RevisedPublishingInterval.Milliseconds(),
+		"revised_max_keepalive_count":    mon.sub.RevisedMaxKeepAliveCount,
+	}
+	a.emitLifecycle(EventSubscriptionChanged, payload, status.SubscriptionStalled)
+}
+
+// emitGap declares an interval in which values were not observed.
+func (a *Adapter) emitGap(from, to time.Time, cause string, subscriptionID uint32) {
+	payload := map[string]any{
+		"reason_code":     status.Gap,
+		"from":            evidence.FormatTime(from),
+		"to":              evidence.FormatTime(to),
+		"duration_ms":     to.Sub(from).Milliseconds(),
+		"cause":           cause,
+		"subscription_id": subscriptionID,
+	}
+	a.emitLifecycle(EventDataGap, payload, status.Gap)
+}
+
+func (a *Adapter) emitLifecycle(eventType string, payload map[string]any, code string) {
+	rec := &evidence.Record{
+		EventType: eventType,
+		Time:      evidence.Time{ReadAt: evidence.FormatTime(time.Now()), Source: evidence.TimeSourceSystem},
+		Actor:     a.actor(),
+		Policy: evidence.Policy{
+			ID:      "config:" + filepath.Base(a.cfg.Path),
+			Version: a.cfg.Revision,
+			Hash:    a.cfg.Version,
+			Kind:    "config",
+		},
+		Payload: payload,
+		Context: a.context(),
+	}
+	if err := a.emit(rec, a.cfg.MQTT.TopicPrefix+"/status"); err != nil {
+		log.Printf("emit %s record failed: %v", eventType, err)
+		return
+	}
+	a.setLastEvent(code)
 	a.publishHealth("up")
 }
 

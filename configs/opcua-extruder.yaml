@@ -39,6 +39,7 @@ source:
   request_timeout_s: 12
   # browse_timeout_s: 120        # for the whole browse
   # liveness_interval_s: 10      # read ServerStatus.CurrentTime; detects half-open connections
+  # keepalive_interval_s: 10     # subscription keep-alive; no publish response within it (x1.5) is a stall
 
 mqtt:
   broker: tcp://mosquitto:1883   # TrailMQ: ssl://trailmq:8883 with tls.enabled: true

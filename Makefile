@@ -8,7 +8,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 
 .PHONY: help build test py-test fmt vet ci compose-config demo demo-down logs verify clean \
 	scenarios scenario-inventory-change scenario-gap scenario-restart scenario-tamper \
-	scenario-server-restart scenario-half-open sim-venv
+	scenario-server-restart scenario-half-open scenario-silent-subscription sim-venv
 
 help:
 	@printf '%s\n' 'TrailSource:' \
@@ -28,6 +28,7 @@ help:
 	  '  make scenario-tamper             one value is edited: hash_mismatch, then chain_break' \
 	  '  make scenario-server-restart     the server restarts reordered and renumbered: same bindings' \
 	  '  make scenario-half-open          the connection stays open but goes silent: lost, then restored' \
+	  '  make scenario-silent-subscription  reads answered, publish responses gone: stalled, gap declared' \
 	  '  make scenarios                   all four, one after another'
 
 build:
@@ -71,7 +72,7 @@ verify: build
 	@ls .demo/journal/*.jsonl >/dev/null 2>&1 || { echo 'no journals in .demo/journal (run make demo first)'; exit 1; }
 	./bin/trailsource verify .demo/journal/*.jsonl
 
-scenario-inventory-change scenario-gap scenario-restart scenario-tamper scenario-server-restart scenario-half-open: scenario-%: build
+scenario-inventory-change scenario-gap scenario-restart scenario-tamper scenario-server-restart scenario-half-open scenario-silent-subscription: scenario-%: build
 	scripts/scenario.sh $*
 
 # Newest python3.x on PATH for the simulator venv (asyncua needs 3.8 or newer).
@@ -81,7 +82,7 @@ sim-venv:
 	$(SIM_VENV_PYTHON) -m venv .demo/sim-venv
 	.demo/sim-venv/bin/pip install -q -r sim/opcua/requirements.txt
 
-scenarios: scenario-inventory-change scenario-gap scenario-restart scenario-tamper scenario-server-restart scenario-half-open
+scenarios: scenario-inventory-change scenario-gap scenario-restart scenario-tamper scenario-server-restart scenario-half-open scenario-silent-subscription
 
 clean:
 	rm -rf bin

@@ -4,30 +4,106 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"time"
 
 	"github.com/gopcua/opcua"
+	"github.com/gopcua/opcua/id"
 	"github.com/gopcua/opcua/ua"
 )
+
+// heartbeatHandle is the client handle of the monitored item on
+// Server_ServerStatus_CurrentTime. Its notifications prove that the publish
+// cycle is alive; they are never recorded as values.
+const heartbeatHandle = math.MaxUint32
+
+// stallTolerance stretches the keep-alive window before a silent publish
+// cycle counts as stalled.
+const stallTolerance = 1.5
 
 // monitor is the one subscription of a session and the monitored items in
 // it, keyed by the NodeId the server uses in this session.
 type monitor struct {
+	client   *opcua.Client
+	interval time.Duration
+	kaCount  uint32 // requested MaxKeepAliveCount
+
 	sub      *opcua.Subscription
 	notifyCh chan *opcua.PublishNotificationData
 	byHandle map[uint32]*boundNode
 	byNode   map[string]uint32 // NodeId string -> client handle
 	itemIDs  map[uint32]uint32 // client handle -> server's MonitoredItemID
 	next     uint32
+
+	// lastPublish is the arrival of the last publish response that carried
+	// notifications. gopcua does not pass keep-alive responses on, so the
+	// heartbeat item makes every publishing interval carry data.
+	lastPublish time.Time
+	window      time.Duration // revised MaxKeepAliveCount x revised interval x tolerance
 }
 
-func newMonitor(ctx context.Context, client *opcua.Client, interval time.Duration) (*monitor, error) {
-	ch := make(chan *opcua.PublishNotificationData, 1024)
-	sub, err := client.Subscribe(ctx, &opcua.SubscriptionParameters{Interval: interval}, ch)
-	if err != nil {
+func newMonitor(ctx context.Context, client *opcua.Client, interval time.Duration, kaCount uint32) (*monitor, error) {
+	m := &monitor{client: client, interval: interval, kaCount: kaCount}
+	if err := m.open(ctx); err != nil {
 		return nil, err
 	}
-	return &monitor{sub: sub, notifyCh: ch, byHandle: map[uint32]*boundNode{}, byNode: map[string]uint32{}, itemIDs: map[uint32]uint32{}, next: 1}, nil
+	return m, nil
+}
+
+// open creates the subscription and its heartbeat item; monitored items are
+// added by syncMonitor.
+func (m *monitor) open(ctx context.Context) error {
+	ch := make(chan *opcua.PublishNotificationData, 1024)
+	lifetime := uint32(10000)
+	if 3*m.kaCount > lifetime {
+		lifetime = 3 * m.kaCount // the lifetime must cover three keep-alive periods
+	}
+	sub, err := m.client.Subscribe(ctx, &opcua.SubscriptionParameters{Interval: m.interval, MaxKeepAliveCount: m.kaCount, LifetimeCount: lifetime}, ch)
+	if err != nil {
+		return err
+	}
+	hb := opcua.NewMonitoredItemCreateRequestWithDefaults(ua.NewNumericNodeID(0, id.Server_ServerStatus_CurrentTime), ua.AttributeIDValue, heartbeatHandle)
+	hb.RequestedParameters.SamplingInterval = float64(m.interval.Milliseconds())
+	hb.RequestedParameters.QueueSize = 1
+	if res, err := sub.Monitor(ctx, ua.TimestampsToReturnNeither, hb); err != nil {
+		cctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = sub.Cancel(cctx)
+		cancel()
+		return fmt.Errorf("heartbeat item: %w", err)
+	} else if len(res.Results) == 1 && res.Results[0].StatusCode != ua.StatusOK {
+		log.Printf("heartbeat item on ServerStatus.CurrentTime rejected (%s); a stall is then detected only if no monitored value changes", res.Results[0].StatusCode)
+	}
+	m.sub, m.notifyCh = sub, ch
+	m.byHandle, m.byNode, m.itemIDs, m.next = map[uint32]*boundNode{}, map[string]uint32{}, map[uint32]uint32{}, 1
+	m.lastPublish = time.Now()
+	m.window = time.Duration(float64(time.Duration(sub.RevisedMaxKeepAliveCount)*sub.RevisedPublishingInterval) * stallTolerance)
+	if m.window < 2*time.Second {
+		m.window = 2 * time.Second
+	}
+	log.Printf("subscription %d: publishing interval %s, max keep-alive count %d, stall after %s without a publish response",
+		sub.SubscriptionID, sub.RevisedPublishingInterval, sub.RevisedMaxKeepAliveCount, m.window)
+	return nil
+}
+
+// stalled reports whether the publish cycle has been silent for longer than
+// the keep-alive window.
+func (m *monitor) stalled(now time.Time) bool {
+	return now.Sub(m.lastPublish) > m.window
+}
+
+// rebuild replaces a stalled subscription; the caller re-adds the monitored
+// items. The new subscription is created before the old one is deleted:
+// with no subscription left, gopcua pauses its publish loop, and a new
+// subscription right after a pause was seen to stay silent.
+func (m *monitor) rebuild(ctx context.Context) error {
+	old := m.sub
+	if err := m.open(ctx); err != nil {
+		return err
+	}
+	cctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = old.Cancel(cctx) // the server may not answer; gopcua forgets it locally first
+	return nil
 }
 
 func (m *monitor) cancel() {

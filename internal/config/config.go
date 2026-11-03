@@ -63,11 +63,12 @@ type Config struct {
 		RebrowseIntervalS      int      `yaml:"rebrowse_interval_s"`
 		SessionBackoffS        int      `yaml:"session_backoff_s"`
 		RequestTimeoutS        int      `yaml:"request_timeout_s"`
-		BrowseTimeoutS         int      `yaml:"browse_timeout_s"`    // whole browse; large address spaces need more
-		LivenessIntervalS      int      `yaml:"liveness_interval_s"` // read ServerStatus.CurrentTime this often; detects half-open connections
-		ApplicationURI         string   `yaml:"application_uri"`     // without certificate_file; with one, the certificate's URI is used
-		ServerThumbprint       string   `yaml:"server_thumbprint"`   // SHA-1 of the server certificate; when set, any other certificate is refused
-		PKIDir                 string   `yaml:"pki_dir"`             // trust list and own certificate (OPC UA layout); default "pki"
+		BrowseTimeoutS         int      `yaml:"browse_timeout_s"`     // whole browse; large address spaces need more
+		LivenessIntervalS      int      `yaml:"liveness_interval_s"`  // read ServerStatus.CurrentTime this often; detects half-open connections
+		KeepAliveIntervalS     int      `yaml:"keepalive_interval_s"` // requested keep-alive period of the subscription; its absence (x1.5) is a stall
+		ApplicationURI         string   `yaml:"application_uri"`      // without certificate_file; with one, the certificate's URI is used
+		ServerThumbprint       string   `yaml:"server_thumbprint"`    // SHA-1 of the server certificate; when set, any other certificate is refused
+		PKIDir                 string   `yaml:"pki_dir"`              // trust list and own certificate (OPC UA layout); default "pki"
 	} `yaml:"source"`
 
 	MQTT struct {
@@ -288,6 +289,9 @@ func (c *Config) applyDefaults() {
 	if c.Source.LivenessIntervalS <= 0 {
 		c.Source.LivenessIntervalS = 10
 	}
+	if c.Source.KeepAliveIntervalS <= 0 {
+		c.Source.KeepAliveIntervalS = 10
+	}
 	if c.Source.ApplicationURI == "" {
 		c.Source.ApplicationURI = "urn:trailsource:client"
 	}
@@ -391,6 +395,15 @@ func (c *Config) RequestTimeout() time.Duration {
 	return time.Duration(c.Source.RequestTimeoutS) * time.Second
 }
 
+// KeepAliveCount is the MaxKeepAliveCount requested for the subscription:
+// keepalive_interval_s expressed in publishing intervals (at least 1).
+func (c *Config) KeepAliveCount() uint32 {
+	n := (time.Duration(c.Source.KeepAliveIntervalS)*time.Second + c.SubscriptionInterval() - 1) / c.SubscriptionInterval()
+	if n < 1 {
+		n = 1
+	}
+	return uint32(n)
+}
 func (c *Config) LivenessInterval() time.Duration {
 	return time.Duration(c.Source.LivenessIntervalS) * time.Second
 }

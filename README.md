@@ -56,7 +56,10 @@ an error. `make scenario-server-restart` brings the server back with
 reversed references, a renumbered namespace and two new variables: the
 diff is the two variables, and every other `entity_key` stays. `make
 scenario-half-open` keeps the connection open but silent: the loss is a
-record seven seconds later, with its reason.
+record seven seconds later, with its reason. `make
+scenario-silent-subscription` keeps the session answering but drops every
+publish response: the stall is a record after the keep-alive window, the
+subscription is rebuilt, and the missed interval is declared as a gap.
 
 ## Report
 
@@ -164,7 +167,7 @@ verifier with the same findings.
 ## Quick start
 
 ```sh
-make scenarios                # all six scenarios (docs/SCENARIOS.md), local processes
+make scenarios                # all seven scenarios (docs/SCENARIOS.md), local processes
 ```
 
 Your own server, step by step (endpoints, security, certificate, first
@@ -254,7 +257,7 @@ testdata/              canonicalisation vectors, report fixture
 
 ## Documentation
 
-- `docs/SCENARIOS.md`: the six scenarios, locally and in the container stack.
+- `docs/SCENARIOS.md`: the seven scenarios, locally and in the container stack.
 - `docs/CONNECT_YOUR_SERVER.md`: from endpoint to verified journal on your server.
 - `docs/STATUS.md`: reason codes and the state of a source.
 - `docs/INTEROP.md`: runs against servers of other implementations, what worked and what did not.

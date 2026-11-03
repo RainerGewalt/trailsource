@@ -1,9 +1,10 @@
 # Scenarios
 
-Six short demonstrations, one command each, that show what TrailSource
+Seven short demonstrations, one command each, that show what TrailSource
 records when something happens at the source: the address space changes,
 the server goes away or restarts changed, the connection goes silent, the
-adapter restarts, or someone edits the journal. They run as local processes
+subscription goes silent while the session lives, the adapter restarts, or
+someone edits the journal. They run as local processes
 in under a minute each. No Grafana, no hardware, no Docker.
 
 ```sh
@@ -13,7 +14,8 @@ make scenario-restart            # a restart is a notice, not a break
 make scenario-tamper             # an edit is found, even a re-sealed one
 make scenario-server-restart     # the server comes back reordered and renumbered: same bindings
 make scenario-half-open          # the connection stays open but goes silent
-make scenarios                   # all six
+make scenario-silent-subscription  # reads answered, publish responses gone
+make scenarios                   # all seven
 ```
 
 Every scenario ends with `trailsource verify`, `scripts/check_bindings.py`
@@ -213,6 +215,47 @@ silenced connections), the next attempt succeeds:
 `source.connection_restored` with `down_ms: 8475`. The chain continues
 without restart, the bindings are unchanged.
 
+## silent-subscription
+
+The session stays healthy, but the publish cycle goes silent: the server
+still answers reads and browses, yet no publish response (neither data
+nor keep-alive) reaches the adapter. `scripts/tcp_relay.py --mode
+drop-publish` produces exactly that: after SIGUSR1 it drops every OPC UA
+PublishResponse from the server and forwards everything else, Read
+responses included (on an unsecured channel, where the message type is
+readable).
+
+The scenario asks for a keep-alive period of 2 s (`keepalive_interval_s`);
+the server grants MaxKeepAliveCount 4 at 500 ms, so the window is 3 s:
+
+```
+subscription 78: publishing interval 500ms, max keep-alive count 4, stall after 3s without a publish response
+subscription 78 stalled (no publish response for 3.004s), replaced by 79
+subscription 79 stalled (no publish response for 7.004s), replaced by 80
+...
+```
+
+1. `source.subscription.changed` with `reason_code:
+   source.subscription_stalled`, `last_publish_at` and the window, three
+   seconds after the last publish response. One record per stall.
+2. While the silence lasts the adapter keeps creating a new subscription
+   (before deleting the old one) and re-adding the monitored items, every
+   window, without further records. The liveness read keeps working, so
+   no `source.connection_lost` is recorded; the run fails if one is.
+3. When the relay forwards again (SIGUSR2), the first publish response
+   ends the stall: `source.data.gap` with `reason_code: common.gap`,
+   `from`, `to` and `cause: source.subscription_stalled`.
+
+```
+  Gaps (1)
+    subscription 2026-11-03T18:58:36.080Z .. 2026-11-03T18:58:51.833Z  15.753s
+               source.subscription_stalled declared by the producer (common.gap): values in this interval were not observed
+```
+
+The chain is intact and the journal verifies as `valid`: the gap is in
+what the adapter observed, not in what it recorded, and the record says
+so.
+
 ## The same scenarios against the container stack
 
 `make demo` runs the simulators, Mosquitto and the adapters in Docker and
@@ -227,7 +270,7 @@ the change that added the local scenarios.
 | restart | `docker compose restart opcua-adapter`. |
 | tamper | Copy `.demo/journal/plant-a-ext-01-extruder-01-opcua.jsonl` and run `scripts/tamper.py` on the copy, as above. |
 | server-restart | `docker compose stop opcua-sim`, then start it with `SIM_REVERSE_ORDER=1 SIM_EXTRA_NAMESPACE=1 SIM_BARREL_ZONES=7` in its environment (`docker compose run` or an override file). |
-| half-open | Not with the stack as it is; it needs the relay between adapter and simulator. |
+| half-open, silent-subscription | Not with the stack as it is; they need the relay between adapter and simulator. |
 
 Then `make verify` and
 `./bin/trailsource report .demo/journal/plant-a-ext-01-extruder-01-opcua.jsonl --html report.html`.

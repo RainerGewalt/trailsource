@@ -3,7 +3,7 @@
 # processes, no Docker. See docs/SCENARIOS.md.
 #
 #   scripts/scenario.sh inventory-change | gap | restart | tamper
-#                       server-restart | half-open
+#                       server-restart | half-open | silent-subscription
 #
 # Needs: ./bin/trailsource (make build), mosquitto on PATH, a Python with
 # asyncua for the simulator: make sim-venv installs sim/opcua/requirements.txt
@@ -23,8 +23,8 @@ cd "$(dirname "$0")/.."
 ROOT=$PWD
 NAME=${1:-}
 case "$NAME" in
-  inventory-change|gap|restart|tamper|server-restart|half-open) ;;
-  *) echo "usage: $0 inventory-change|gap|restart|tamper|server-restart|half-open" >&2; exit 2 ;;
+  inventory-change|gap|restart|tamper|server-restart|half-open|silent-subscription) ;;
+  *) echo "usage: $0 inventory-change|gap|restart|tamper|server-restart|half-open|silent-subscription" >&2; exit 2 ;;
 esac
 
 export SCENARIO_MQTT_PORT=${SCENARIO_MQTT_PORT:-18830}
@@ -33,8 +33,9 @@ export SCENARIO_DIR=$ROOT/.demo/scenarios/$NAME
 export SCENARIO_REBROWSE_S=${SCENARIO_REBROWSE_S:-30}
 export SCENARIO_BACKOFF_S=${SCENARIO_BACKOFF_S:-2}
 export SCENARIO_LIVENESS_S=${SCENARIO_LIVENESS_S:-10}
+export SCENARIO_KEEPALIVE_S=${SCENARIO_KEEPALIVE_S:-10}
 SIM_PORT=$SCENARIO_OPC_PORT
-[ "$NAME" = half-open ] && SIM_PORT=$((SCENARIO_OPC_PORT + 1))
+case "$NAME" in half-open|silent-subscription) SIM_PORT=$((SCENARIO_OPC_PORT + 1)) ;; esac
 EXPECT_DIFF=
 GAP_S=${SCENARIO_GAP_S:-8}
 BIN=$ROOT/bin/trailsource
@@ -98,7 +99,8 @@ start_sim() {
   wait_port "$SIM_PORT" simulator
 }
 start_relay() {
-  "$SIM_PYTHON" scripts/tcp_relay.py "$SCENARIO_OPC_PORT" 127.0.0.1 "$SIM_PORT" >>"$SCENARIO_DIR/logs/relay.log" 2>&1 &
+  # $1: fault mode of the relay (half-open or drop-publish)
+  "$SIM_PYTHON" scripts/tcp_relay.py "$SCENARIO_OPC_PORT" 127.0.0.1 "$SIM_PORT" --mode "${1:-half-open}" >>"$SCENARIO_DIR/logs/relay.log" 2>&1 &
   RELAY_PID=$!
   wait_port "$SCENARIO_OPC_PORT" relay
 }
@@ -202,7 +204,7 @@ server-restart)
 half-open)
   export SCENARIO_LIVENESS_S=2
   start_sim 0
-  start_relay
+  start_relay half-open
   start_adapter
   wait_for '"reason_code":"source.inventory_initial"' 1 30 "initial inventory"
   sleep 4
@@ -214,6 +216,24 @@ half-open)
   say "relay forwards again"
   kill -USR2 "$RELAY_PID"
   wait_for '"reason_code":"source.connection_restored"' 1 40 "source.connection_restored"
+  sleep 4
+  finish
+  ;;
+silent-subscription)
+  export SCENARIO_KEEPALIVE_S=2
+  start_sim 0
+  start_relay drop-publish
+  start_adapter
+  wait_for '"reason_code":"source.inventory_initial"' 1 30 "initial inventory"
+  sleep 4
+  say "relay drops every publish response; reads, browses and the liveness check still work"
+  kill -USR1 "$RELAY_PID"
+  wait_for '"reason_code":"source.subscription_stalled"' 1 30 "source.subscription_stalled (no data, no keep-alive within the window)"
+  sleep "$GAP_S"
+  say "relay forwards publish responses again"
+  kill -USR2 "$RELAY_PID"
+  wait_for '"reason_code":"common.gap"' 1 45 "common.gap declaring the unobserved interval"
+  [ "$(count '"reason_code":"source.connection_lost"')" -eq 0 ] || die "the session should have survived, but a lost connection was recorded"
   sleep 4
   finish
   ;;
