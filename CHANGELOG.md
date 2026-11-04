@@ -5,7 +5,40 @@ Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
-Nothing yet.
+### Fixed
+
+- `make demo` on Linux: the adapters (uid 10001) could not write
+  `.demo/state` and `.demo/journal`, created by the host user or by Docker,
+  and restarted in a loop with `permission denied`. A demo-only one-shot
+  service `demo-init` makes both directories writable before the adapters
+  start, independent of the host uid.
+- The version no longer carries the tag's leading `v`: `go install` builds,
+  the container image and `make build` now report and record `0.1.0` like
+  the release archives, instead of `v0.1.0`.
+- `make sim-venv` uses only Python 3.9 or newer (asyncua 1.1.8 needs it)
+  and stops with a clear message if none is found, instead of failing in
+  pip with `No matching distribution found for asyncua==1.1.8`.
+
+### Added
+
+- `trailsource --version` as an alias of `trailsource version`.
+
+### Documentation
+
+- README "Install": create `pki`, `state` and `journal` before the first
+  `docker run` (Docker creates a missing bind-mount directory as root),
+  mount the mapping directory, and state the Go 1.24 requirement for
+  building from a clone.
+- `docs/CONNECT_YOUR_SERVER.md`, step 5: the fields a local run has to
+  change in the copied example (`state_dir`, `journal.path`,
+  `mapping_file`, `mqtt.broker`); the README short form matches it.
+- Links to trail-evidence v0.2.0 with both install lines (Go binary
+  `trail-evidence`, `pip install trail-evidence` for `trail-evidence-py`);
+  statements that it is still unpublished removed.
+- Current address-space fingerprints in the README and
+  `docs/SCENARIOS.md` samples; `make help` lists seven scenarios;
+  `version` in the command list and `internal/trust` in the repository
+  layout.
 
 ## 0.1.0 - 2026-11-03
 

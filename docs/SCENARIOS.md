@@ -31,14 +31,17 @@ along. The runner is `scripts/scenario.sh`.
 
 ## Requirements
 
-- Go, to build `bin/trailsource` (`make` does that).
+- Go 1.24 or newer, to build `bin/trailsource` (`make` does that).
 - `mosquitto` on `PATH`. The runner starts its own broker on
   `127.0.0.1:18830`. Without Mosquitto, start any MQTT broker on that port
   and run with `SCENARIO_BROKER=external`.
-- A Python 3 with `asyncua` for the OPC UA simulator
-  (`pip install -r sim/opcua/requirements.txt`). The runner looks for one
-  among `python3`, `/usr/bin/python3` and `python`; set `SIM_PYTHON` to
-  choose explicitly.
+- Python 3.9 or newer with `asyncua` for the OPC UA simulator. `make
+  sim-venv` installs `sim/opcua/requirements.txt` (asyncua 1.1.8, which
+  needs 3.9) into `.demo/sim-venv` with the newest `python3.x` on `PATH`,
+  and stops with a message if none is 3.9 or newer; set `SIM_VENV_PYTHON`
+  to choose the interpreter. The runner uses `.demo/sim-venv` when present,
+  otherwise the first of `python3`, `/usr/bin/python3` and `python` that
+  can import `asyncua`; set `SIM_PYTHON` to choose explicitly.
 
 Ports are configurable with `SCENARIO_MQTT_PORT` and `SCENARIO_OPC_PORT`
 (default 48400). The adapter configuration for all scenarios is
@@ -58,8 +61,8 @@ What the report shows:
 
 ```
   Address space generations (2)
-    gen 1   seq 2      ...  source.inventory_initial   28 nodes  sha256:73e25d33f55e...
-    gen 2   seq 149    ...  source.node_added          30 nodes  sha256:d249a2e98ace...
+    gen 1   seq 2      ...  source.inventory_initial   28 nodes  sha256:f276db9dd6d9...
+    gen 2   seq 149    ...  source.node_added          30 nodes  sha256:f7e48ebc0b07...
             added 2, removed 0, changed 0
             + Plant.Line01.Extruder01.BarrelZone07.TempActualC (float64)
             + Plant.Line01.Extruder01.BarrelZone07.TempSetpointC (float64)
@@ -149,8 +152,18 @@ this is why the record format has a signature block and why anchoring the
 latest `chain_hash` somewhere else matters. TrailSource v0.1 does neither,
 and says so.
 
-Both tampered journals produce the same findings with the `trail-evidence`
-reference verifier (`trail-evidence verify <file>`).
+Both tampered journals produce the same findings with the
+[trail-evidence](https://github.com/RainerGewalt/trail-evidence) v0.2.0
+reference verifier. Its Go binary is `trail-evidence`, its Python package
+installs `trail-evidence-py`:
+
+```sh
+go install github.com/RainerGewalt/trail-evidence/go/cmd/trail-evidence@v0.2.0
+trail-evidence verify .demo/scenarios/tamper/journal/tampered-resealed.jsonl
+
+pip install trail-evidence==0.2.0
+trail-evidence-py verify .demo/scenarios/tamper/journal/tampered-resealed.jsonl
+```
 
 ## server-restart
 

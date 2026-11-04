@@ -25,8 +25,10 @@ report names both the gap and the new address-space generation.*
 ## Three questions this answers
 
 Each answer is one command, runs locally in about half a minute against the
-bundled simulator, and needs neither Grafana nor hardware nor Docker
-(Mosquitto and a Python with `asyncua` are enough; see `docs/SCENARIOS.md`).
+bundled simulator, and needs neither Grafana nor hardware nor Docker. Go
+1.24 or newer, Mosquitto and Python 3.9 or newer for the simulator are
+enough: `make sim-venv` installs `asyncua` into `.demo/sim-venv` (see
+`docs/SCENARIOS.md`).
 
 **Which address space was valid?**
 
@@ -99,7 +101,7 @@ Stream plant-a-ext-01-extruder-01-opcua
   Values    28 nodes; quality good 135, uncertain 0, bad 0; without source timestamp 0
 
   Address space generations (1)
-    gen 1   seq 2      2026-11-03T17:23:39.746Z  source.inventory_initial   28 nodes  sha256:73e25d33f55e...
+    gen 1   seq 2      2026-11-03T17:23:39.746Z  source.inventory_initial   28 nodes  sha256:f276db9dd6d9...
 
   Gaps (1)
     connection 2026-11-03T17:23:45.752Z .. 2026-11-03T17:23:55.763Z  10.011s
@@ -149,7 +151,8 @@ better choice.
   identically in every RFC 8785 implementation.
 - Records every session start, loss, failed attempt and orderly stop as
   `source.connection.changed` with a reason code from the shared
-  trail-evidence catalog (`docs/STATUS.md`). The
+  [trail-evidence](https://github.com/RainerGewalt/trail-evidence) catalog
+  (`docs/STATUS.md`). The
   retained health topic carries the state of the source as `last_event`
   and `last_seen`, and an MQTT Last Will.
 - Seals every record into a per-source hash chain (`seq`, `prev_hash`,
@@ -164,8 +167,19 @@ better choice.
 
 The record format is the Trail Evidence Record v1 (see
 `docs/RECORD_MAPPING.md`). Canonicalisation uses `github.com/gowebpki/jcs`;
-journals written by TrailSource verify with the `trail-evidence` reference
-verifier with the same findings.
+journals written by TrailSource verify with the
+[trail-evidence](https://github.com/RainerGewalt/trail-evidence) v0.2.0
+reference verifier with the same findings. It comes as a Go binary,
+`trail-evidence`, and as a Python package whose command is
+`trail-evidence-py`:
+
+```sh
+go install github.com/RainerGewalt/trail-evidence/go/cmd/trail-evidence@v0.2.0
+trail-evidence verify journal/<source-id>.jsonl
+
+pip install trail-evidence==0.2.0
+trail-evidence-py verify journal/<source-id>.jsonl
+```
 
 ## What it does not do
 
@@ -189,6 +203,11 @@ With Go 1.24 or newer:
 go install github.com/RainerGewalt/trailsource/cmd/trailsource@latest
 ```
 
+Building from a clone (`make build`, which the scenarios run first) needs
+the same Go 1.24 or newer. An older `go` with the default
+`GOTOOLCHAIN=auto` downloads 1.24 on first use; with `GOTOOLCHAIN=local`
+it stops with an error.
+
 Container image (linux/amd64, linux/arm64, runs as uid 10001, contains the
 OPC UA adapter only):
 
@@ -199,22 +218,29 @@ docker run --rm ghcr.io/rainergewalt/trailsource:0.1.0 endpoints opc.tcp://192.0
 
 Against a server of your own: write the configuration as described in
 `docs/CONNECT_YOUR_SERVER.md` with container paths (`pki_dir: /pki`,
-`state_dir: /state`, `journal.path: /journal/<source-id>.jsonl`) and an MQTT
-broker the container can reach, then
+`state_dir: /state`, `journal.path: /journal/<source-id>.jsonl`,
+`mapping_file: /config/mapping/<file>.yaml` or no `mapping_file` at all)
+and an MQTT broker the container can reach. Create the directories before
+the first run: Docker creates a missing bind-mount directory as root, and
+the container's user then cannot write to it (`permission denied`).
 
 ```sh
+mkdir -p pki state journal configs/mapping
 docker run --rm --read-only --user "$(id -u):$(id -g)" \
   -v "$PWD/my-server.yaml:/config/trailsource.yaml:ro" \
+  -v "$PWD/configs/mapping:/config/mapping:ro" \
   -v "$PWD/pki:/pki" -v "$PWD/state:/state" -v "$PWD/journal:/journal" \
   -e TRAILSOURCE_OPCUA_USERNAME -e TRAILSOURCE_OPCUA_PASSWORD \
   ghcr.io/rainergewalt/trailsource:0.1.0 run --config /config/trailsource.yaml
 ```
 
 TrailSource only reads from the server; `--read-only` also keeps the
-container's own filesystem read-only, so the three mounted directories are
+container's own filesystem read-only, so the three writable mounts are
 the only places it writes (trust list decisions in `pki/rejected`, chain
-and inventory state, journal). Run `browse` instead of `run` with the same
-mounts for a first look without MQTT.
+and inventory state, journal). The mapping directory is mounted read-only
+and is only read when the configuration sets `mapping_file`; without one,
+every node gets a role derived from its name. Run `browse` instead of `run`
+with the same mounts for a first look without MQTT.
 
 ## Quick start
 
@@ -223,13 +249,16 @@ make scenarios                # all seven scenarios (docs/SCENARIOS.md), local p
 ```
 
 Your own server, step by step (endpoints, security, certificate, first
-browse, mapping file, run): `docs/CONNECT_YOUR_SERVER.md`. The short form:
+browse, mapping file, run): `docs/CONNECT_YOUR_SERVER.md`. The short form,
+with a configuration that uses local paths (`state_dir: state`,
+`journal.path: journal/<source-id>.jsonl`, a reachable `mqtt.broker`; step
+5 of that guide lists every field to change):
 
 ```sh
 make build
 ./bin/trailsource endpoints opc.tcp://192.0.2.10:4840
 ./bin/trailsource browse --config my-server.yaml --mapping-out configs/mapping/my-server.yaml
-./bin/trailsource run --config my-server.yaml
+./bin/trailsource run --config my-server.yaml            # with mapping_file: configs/mapping/my-server.yaml
 ./bin/trailsource verify journal/*.jsonl
 ./bin/trailsource report journal/<source-id>.jsonl --html report.html
 ```
@@ -253,6 +282,7 @@ trailsource gen-cert --uri <urn>                 client certificate for Sign and
 trailsource verify [--json] <journal>...         verify journals
 trailsource report <journal> [--html <file>]     readable report, text, HTML or --json
 trailsource config-version --config <file>       the config_version every record carries
+trailsource version                              the version every record carries (also --version)
 ```
 
 ## Topics
@@ -294,6 +324,7 @@ internal/evidence      Trail Evidence Record v1 (JCS, seal, verify)
 internal/chain         persistent per-stream sequence and chain position
 internal/status        reason codes and the last_event/last_seen state model
 internal/report        journal report (text, HTML, JSON)
+internal/trust         OPC UA trust list: server certificate checks, rejected copies
 internal/mapping       semantic role mapping file and skeleton generator
 internal/certgen       client certificate generation
 internal/config        YAML config and config_version
