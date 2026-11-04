@@ -21,7 +21,7 @@ help:
 	  '  make demo-down       stop the demo stack' \
 	  '  make logs            follow demo logs' \
 	  '' \
-	  'Scenarios (local processes, no Docker; need mosquitto and Python with asyncua):' \
+	  'Scenarios (local processes, no Docker; need Go 1.24+, mosquitto and Python 3.9+ with asyncua):' \
 	  '  make sim-venv                    install the simulator requirements into .demo/sim-venv' \
 	  '  make scenario-inventory-change   a node appears at runtime: source.node_added with diff' \
 	  '  make scenario-gap                the server goes away and comes back: a gap with duration' \
@@ -30,7 +30,7 @@ help:
 	  '  make scenario-server-restart     the server restarts reordered and renumbered: same bindings' \
 	  '  make scenario-half-open          the connection stays open but goes silent: lost, then restored' \
 	  '  make scenario-silent-subscription  reads answered, publish responses gone: stalled, gap declared' \
-	  '  make scenarios                   all four, one after another'
+	  '  make scenarios                   all seven, one after another'
 
 build:
 	mkdir -p bin
@@ -76,10 +76,14 @@ verify: build
 scenario-inventory-change scenario-gap scenario-restart scenario-tamper scenario-server-restart scenario-half-open scenario-silent-subscription: scenario-%: build
 	scripts/scenario.sh $*
 
-# Newest python3.x on PATH for the simulator venv (asyncua needs 3.8 or newer).
-SIM_VENV_PYTHON ?= $(shell for p in python3.13 python3.12 python3.11 python3.10 python3.9 python3.8 python3; do command -v $$p >/dev/null && { echo $$p; break; }; done)
+# Newest Python 3.9 or newer on PATH for the simulator venv: asyncua 1.1.8
+# (sim/opcua/requirements.txt) needs 3.9. Override with SIM_VENV_PYTHON=...
+PY39_CHECK := import sys; sys.exit(sys.version_info < (3, 9))
+SIM_VENV_PYTHON ?= $(shell for p in python3.13 python3.12 python3.11 python3.10 python3.9 python3; do command -v $$p >/dev/null && $$p -c '$(PY39_CHECK)' 2>/dev/null && { echo $$p; break; }; done)
 
 sim-venv:
+	@test -n "$(SIM_VENV_PYTHON)" || { echo 'sim-venv: no Python 3.9 or newer on PATH (asyncua 1.1.8 needs it); install one or set SIM_VENV_PYTHON=/path/to/python3.x' >&2; exit 1; }
+	@$(SIM_VENV_PYTHON) -c '$(PY39_CHECK)' 2>/dev/null || { echo 'sim-venv: $(SIM_VENV_PYTHON) is not a Python 3.9 or newer (asyncua 1.1.8 needs it); set SIM_VENV_PYTHON=/path/to/python3.x' >&2; exit 1; }
 	$(SIM_VENV_PYTHON) -m venv .demo/sim-venv
 	.demo/sim-venv/bin/pip install -q -r sim/opcua/requirements.txt
 
