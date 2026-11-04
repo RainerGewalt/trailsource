@@ -24,6 +24,24 @@ x-adapter-env: &adapter-env
   TRAILSOURCE_OPCUA_PASSWORD: "${TRAILSOURCE_OPCUA_PASSWORD:-}"
 
 services:
+  # Demo only. The adapters run as uid 10001, but ./.demo/state and
+  # ./.demo/journal belong to whoever created them: your user (make demo) or
+  # root (Docker, when they are missing). This one-shot step makes both
+  # directories writable for everyone, whatever the host uid; the adapters
+  # then write files with mode 0644 that you can read, verify and delete from
+  # the host. Existing state and journals are kept. A real deployment mounts
+  # directories owned by the adapter's user instead (README, "Install").
+  demo-init:
+    image: alpine:3.21
+    container_name: trailsource_demo_init
+    user: "0:0"
+    network_mode: none
+    restart: "no"
+    command: ["chmod", "0777", "/demo/state", "/demo/journal"]
+    volumes:
+      - ./.demo/state:/demo/state
+      - ./.demo/journal:/demo/journal
+
   mosquitto:
     <<: *common
     image: eclipse-mosquitto:2.0
@@ -74,6 +92,7 @@ services:
       args: { VERSION: "${TRAILSOURCE_VERSION:-0.1.0-dev}" }
     container_name: trailsource_opcua_adapter
     depends_on:
+      demo-init: { condition: service_completed_successfully }
       mosquitto: { condition: service_healthy }
       opcua-sim: { condition: service_started }
     environment: *adapter-env
@@ -88,6 +107,7 @@ services:
     build: ./adapters
     container_name: trailsource_modbus_adapter
     depends_on:
+      demo-init: { condition: service_completed_successfully }
       mosquitto: { condition: service_healthy }
       modbus-sim: { condition: service_started }
     environment:
@@ -105,6 +125,7 @@ services:
     build: ./adapters
     container_name: trailsource_ethernetip_adapter
     depends_on:
+      demo-init: { condition: service_completed_successfully }
       mosquitto: { condition: service_healthy }
       ethernetip-sim: { condition: service_started }
     environment:
