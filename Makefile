@@ -3,7 +3,8 @@ SHELL := /usr/bin/env bash
 
 COMPOSE ?= docker compose
 PYTHON  ?= python3
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.1.0-dev)
+# Without the tag's leading v, like the release archives and images: 0.1.0.
+VERSION ?= $(patsubst v%,%,$(shell git describe --tags --always --dirty 2>/dev/null || echo 0.1.0-dev))
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
 .PHONY: help build test py-test fmt vet ci compose-config demo demo-down logs verify clean \

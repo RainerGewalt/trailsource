@@ -29,15 +29,27 @@ import (
 // version is set at build time via -ldflags "-X main.version=...". A binary
 // built with `go install ...@v0.1.0` has no ldflags; it takes the module
 // version from the build info instead, so records name the real version.
+// Either way the version is written without the tag's leading "v" (0.1.0),
+// the same in release archives, container images and go install builds.
 var version = "0.1.0-dev"
 
 func init() {
-	if version != "0.1.0-dev" {
-		return
+	if version == "0.1.0-dev" {
+		if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+			version = bi.Main.Version
+		}
 	}
-	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
-		version = bi.Main.Version
+	version = normalizeVersion(version)
+}
+
+// normalizeVersion drops the leading "v" of a Git tag or Go module version
+// (v0.1.0 -> 0.1.0, v0.1.1-0.20261104120000-abcdef123456 ->
+// 0.1.1-0.20261104120000-abcdef123456) and leaves everything else as it is.
+func normalizeVersion(v string) string {
+	if len(v) > 1 && v[0] == 'v' && v[1] >= '0' && v[1] <= '9' {
+		return v[1:]
 	}
+	return v
 }
 
 func usage() {
@@ -54,7 +66,7 @@ Usage:
   trailsource gen-cert --uri <urn> [--host <name>]... [--pki <dir>]
                                                       create a client certificate for Sign/SignAndEncrypt
   trailsource config-version --config <f>             print config_version of a config file
-  trailsource version                                 print the build version
+  trailsource version                                 print the build version (also --version)
 `, version)
 }
 
@@ -79,7 +91,7 @@ func main() {
 		os.Exit(genCertCmd(os.Args[2:]))
 	case "config-version":
 		os.Exit(configVersionCmd(os.Args[2:]))
-	case "version":
+	case "version", "--version":
 		fmt.Println(version)
 	case "-h", "--help", "help":
 		usage()
