@@ -57,7 +57,7 @@ if [ -z "${SIM_PYTHON:-}" ]; then
     fi
   done
 fi
-[ -n "${SIM_PYTHON:-}" ] || die "no Python with asyncua found; run make sim-venv (or pip install -r sim/opcua/requirements.txt) or set SIM_PYTHON"
+[ -n "${SIM_PYTHON:-}" ] || die "no Python with asyncua found (tried .demo/sim-venv, python3, /usr/bin/python3, python); run make sim-venv, which needs Python 3.9 or newer, or set SIM_PYTHON"
 port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 if [ "${SCENARIO_BROKER:-}" != "external" ] && port_busy "$SCENARIO_MQTT_PORT"; then die "port $SCENARIO_MQTT_PORT is in use (set SCENARIO_MQTT_PORT)"; fi
 for p in "$SCENARIO_OPC_PORT" "$SIM_PORT"; do

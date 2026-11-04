@@ -182,8 +182,27 @@ even though TrailSource did not.
 
 ## 5. Browse once
 
-Copy `configs/opcua-extruder.yaml`, set `endpoint`, the security settings
-and `browse_roots`, then:
+Copy `configs/opcua-extruder.yaml` and set `source.endpoint`, the security
+settings and `browse_roots`. The example is written for the container demo
+stack, so a local run (the binary, not Docker) also needs these fields
+changed:
+
+| Field | Example value | Local value |
+|---|---|---|
+| `state_dir` | `/state` | `state` |
+| `journal.path` | `/journal/plant-a-ext-01-extruder-01-opcua.jsonl` | `journal/<source-id>.jsonl` |
+| `mapping_file` | `/config/mapping/extruder.yaml` | remove it until step 6 writes yours, then `configs/mapping/my-server.yaml` |
+| `mqtt.broker` | `tcp://mosquitto:1883` | your broker, for example `tcp://localhost:1883` |
+
+`state` and `journal/<source-id>.jsonl` are also the defaults when the
+two lines are removed. Relative paths are resolved against the directory
+you start `trailsource` in; the commands below assume the same one. Left
+unchanged, `run` stops with `load mapping: open
+/config/mapping/extruder.yaml: no such file or directory`, then with `open
+journal: mkdir /journal: permission denied`, and with an unreachable
+broker with `mqtt connect timeout`. `browse` uses none of these four
+fields. For the container image, keep the container paths and mount the
+directories as shown in the README ("Install"). Then:
 
 ```sh
 ./bin/trailsource browse --config my-server.yaml
@@ -252,6 +271,7 @@ fingerprint").
 ## 6. Generate the mapping file from the first browse
 
 ```sh
+mkdir -p configs/mapping
 ./bin/trailsource browse --config my-server.yaml --mapping-out configs/mapping/my-server.yaml
 ```
 

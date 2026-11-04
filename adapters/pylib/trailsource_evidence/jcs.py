@@ -9,8 +9,8 @@ Producers therefore transport 64-bit integers and rounding-sensitive decimals
 as strings.
 
 The number and sorting logic follows the trail-evidence reference Python
-package; TODO(trail-evidence): replace this module with that package once it
-is published.
+package; TODO(trail-evidence): replace this module with that package,
+published on PyPI since v0.2.0 but not a dependency yet.
 """
 from __future__ import annotations
 
