@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="t">
+  <title id="t">TrailSource: a source point with signals read from it.</title>
+  <rect x="4" y="4" width="120" height="120" rx="18" fill="#003941"/>
+  <circle cx="40" cy="64" r="12" fill="#F76628"/>
+  <path d="M60.5 43.7A29 29 0 0 1 60.5 84.3" fill="none" stroke="#ffffff" stroke-width="10" stroke-linecap="round"/>
+  <path d="M73.9 30.4A48 48 0 0 1 73.9 97.6" fill="none" stroke="#ffffff" stroke-width="10" stroke-linecap="round"/>
+</svg>

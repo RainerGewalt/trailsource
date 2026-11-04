@@ -1,4 +1,9 @@
-# TrailSource
+<p align="center">
+  <img src="docs/brand/trailsource-mark.svg" width="96"
+       alt="TrailSource logo: a source point with signals read from it." />
+</p>
+
+<h1 align="center">TrailSource</h1>
 
 A read-only OPC UA source adapter that publishes every observation as a
 sealed Trail Evidence Record over MQTT and keeps a local, verifiable
@@ -9,6 +14,13 @@ data is missing and why.
 Status: v0.1, OPC UA only, read-only. The Modbus TCP and EtherNet/IP
 adapters in this repository are a preview and not part of the 0.1 gate
 (see "Preview adapters" below).
+
+![TrailSource HTML report. Verify OK: 140 records in 1 stream, 0 errors, 1 notice. Stream plant-a-ext-01-extruder-01-opcua with 133 value observations from 30 nodes, all of good quality. Address space generation 2 adds Plant.Line01.Extruder01.BarrelZone07.TempActualC and TempSetpointC. One connection gap of 6.007 seconds with the reason source.connection_lost and the last value before the gap.](docs/screenshots/report-server-restart.png)
+
+*`trailsource report --html` for the journal of `make
+scenario-server-restart`, a local run against the bundled simulator: the
+server comes back after a six-second gap with two new variables, and the
+report names both the gap and the new address-space generation.*
 
 ## Three questions this answers
 
