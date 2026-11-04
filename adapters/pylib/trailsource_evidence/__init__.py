@@ -1,8 +1,9 @@
 """Trail Evidence Record v1 for Python adapters (stdlib only).
 
-TODO(trail-evidence): replace with the trail-evidence Python package once it
-is published. The behaviour here must reproduce testdata/vectors.json byte for
-byte together with the Go implementation in internal/evidence.
+TODO(trail-evidence): replace with the trail-evidence Python package,
+published on PyPI since v0.2.0 but not a dependency yet. The behaviour here
+must reproduce testdata/vectors.json byte for byte together with the Go
+implementation in internal/evidence.
 """
 from .jcs import canonical_jcs
 from .record import (

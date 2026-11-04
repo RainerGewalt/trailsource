@@ -3,7 +3,8 @@
 // and stream verification.
 //
 // TODO(trail-evidence): replace this package with
-// github.com/RainerGewalt/trail-evidence/go once that library is published.
-// The behaviour here follows the binding v1 draft byte for byte; the test
-// vectors in testdata/vectors.json are the contract both sides must meet.
+// github.com/RainerGewalt/trail-evidence/go (released, v0.2.0), which is not
+// a dependency yet. The behaviour here follows the binding v1 draft byte
+// for byte; the test vectors in testdata/vectors.json are the contract both
+// sides must meet.
 package evidence
