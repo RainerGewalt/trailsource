@@ -22,9 +22,38 @@ Keep a Changelog; versions follow Semantic Versioning.
 ### Added
 
 - `trailsource --version` as an alias of `trailsource version`.
+- `make first-use` (`scripts/first-use.sh`): walks through the README and
+  `docs/CONNECT_YOUR_SERVER.md` from a fresh clone, or with `RELEASE=x.y.z`
+  against the published tag, `go install`, release archive and image, and
+  stops at the first step that does not behave as documented. Testing
+  levels in `docs/TESTING.md`.
+- Conformance with the trail-evidence reference vectors
+  (`TestReferenceVectors`): every valid vector within the producer role is
+  reproduced byte for byte, a legacy integer `seq` verifies as written, and
+  every invalid vector fails the verifier. CI checks out trail-evidence for
+  it, so the reason-code catalog test now runs there too instead of being
+  skipped. That showed that `source.subscription_stalled`, which TrailSource
+  0.1 emits, is in the trail-evidence catalog only after v0.2.0;
+  trail-evidence v0.2.1 lists it, and CI checks against that tag. Journals
+  with the code verify with v0.2.0 unchanged.
+- `scripts/check_demo_init.py`, run by `make ci` and in CI: the demo-only
+  `chmod 0777` of `demo-init` may reach `.demo/state` and `.demo/journal`
+  only (no other mount, no recursive chmod, no other path, no network).
 
 ### Documentation
 
+- README: what a verified journal shows is stated exactly (no edit, removal
+  or reordering without re-sealing everything after it; records cut off at
+  the end are not detectable without an outside anchor), and a section
+  "Using it with TrailMQ": topics need a topic rule and publish rights
+  before the first run, TrailMQ does not read the journal. The comments in
+  `docker-compose.yaml` and `configs/opcua-extruder.yaml` no longer suggest
+  more than that.
+- `docs/RECORD_MAPPING.md`: `context.host` is the operating-system host name
+  of the adapter's machine and travels in every record and MQTT message.
+- `docs/CONNECT_YOUR_SERVER.md`, step 2: names the security policies and
+  logins that the interoperability runs of 3 November covered, instead of
+  only the first two.
 - README "Install": create `pki`, `state` and `journal` before the first
   `docker run` (Docker creates a missing bind-mount directory as root),
   mount the mapping directory, and state the Go 1.24 requirement for

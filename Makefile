@@ -7,7 +7,7 @@ PYTHON  ?= python3
 VERSION ?= $(patsubst v%,%,$(shell git describe --tags --always --dirty 2>/dev/null || echo 0.1.0-dev))
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: help build test py-test fmt vet ci compose-config demo demo-down logs verify clean \
+.PHONY: help build test py-test fmt vet ci compose-config demo demo-down logs verify clean first-use \
 	scenarios scenario-inventory-change scenario-gap scenario-restart scenario-tamper \
 	scenario-server-restart scenario-half-open scenario-silent-subscription sim-venv
 
@@ -19,6 +19,7 @@ help:
 	  '  make demo            start simulators, Mosquitto and adapters (docker compose)' \
 	  '  make verify          verify the journals written by the demo adapters' \
 	  '  make demo-down       stop the demo stack' \
+  '  make first-use       README and CONNECT_YOUR_SERVER.md from a fresh clone (docs/TESTING.md); RELEASE=x.y.z for a release' \
 	  '  make logs            follow demo logs' \
 	  '' \
 	  'Scenarios (local processes, no Docker; need Go 1.24+, mosquitto and Python 3.9+ with asyncua):' \
@@ -51,10 +52,11 @@ vet:
 py-compile:
 	$(PYTHON) -m py_compile adapters/modbus/main.py adapters/ethernetip/main.py \
 	  adapters/pylib/trailsource_adapter/runtime.py sim/opcua/main.py sim/modbus/main.py sim/ethernetip/main.py \
-	  scripts/tamper.py scripts/tcp_relay.py scripts/check_bindings.py
+	  scripts/tamper.py scripts/tcp_relay.py scripts/check_bindings.py scripts/check_demo_init.py
 
 compose-config:
 	$(COMPOSE) config >/dev/null
+	$(COMPOSE) config --format json | $(PYTHON) scripts/check_demo_init.py "$(CURDIR)"
 
 ci: fmt vet test py-compile compose-config
 
@@ -88,6 +90,9 @@ sim-venv:
 	.demo/sim-venv/bin/pip install -q -r sim/opcua/requirements.txt
 
 scenarios: scenario-inventory-change scenario-gap scenario-restart scenario-tamper scenario-server-restart scenario-half-open scenario-silent-subscription
+
+first-use:
+	RELEASE=$(RELEASE) ./scripts/first-use.sh
 
 clean:
 	rm -rf bin

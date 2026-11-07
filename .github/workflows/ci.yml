@@ -10,6 +10,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Conformance (docs/TESTING.md, L3): the reference vectors and the
+      # reason-code catalog of the trail-evidence release this adapter is
+      # compatible with. v0.2.1 is the first tag whose catalog lists
+      # source.subscription_stalled. The go tool ignores directories that
+      # start with a dot.
+      - uses: actions/checkout@v4
+        with:
+          repository: RainerGewalt/trail-evidence
+          ref: v0.2.1
+          path: .trail-evidence
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -21,6 +31,8 @@ jobs:
         run: go vet ./...
       - name: test
         run: go test ./...
+        env:
+          TRAIL_EVIDENCE_DIR: ${{ github.workspace }}/.trail-evidence
 
   python:
     runs-on: ubuntu-latest
@@ -34,7 +46,7 @@ jobs:
           python -m py_compile adapters/modbus/main.py adapters/ethernetip/main.py \
             adapters/pylib/trailsource_adapter/runtime.py \
             sim/opcua/main.py sim/modbus/main.py sim/ethernetip/main.py \
-            scripts/tamper.py scripts/tcp_relay.py scripts/check_bindings.py
+            scripts/tamper.py scripts/tcp_relay.py scripts/check_bindings.py scripts/check_demo_init.py
       - name: unit tests (stdlib only)
         run: cd adapters/pylib && python -m unittest discover -s tests -t . -v
 
@@ -44,3 +56,5 @@ jobs:
       - uses: actions/checkout@v4
       - name: docker compose config
         run: docker compose config >/dev/null
+      - name: demo-init chmod stays limited to the demo directories
+        run: docker compose config --format json | python3 scripts/check_demo_init.py "$PWD"

@@ -41,9 +41,11 @@ session is opened for this.
 | `Aes128_Sha256_RsaOaep`, `Aes256_Sha256_RsaPss` | Newer policies; use them when the server offers them. |
 
 The policy names are the ones `endpoints` prints. TrailSource has been
-run with `None` and with `Basic256Sha256` + `SignAndEncrypt` against
-public servers (see `docs/INTEROP.md`); the other policies come from the
-OPC UA stack (`gopcua`) and have not been exercised here.
+run against two public servers with `None` and with `Basic256Sha256`,
+`Aes128_Sha256_RsaOaep` and `Aes256_Sha256_RsaPss` in both `Sign` and
+`SignAndEncrypt`, anonymously and with a username (`docs/INTEROP.md`, runs
+of 3 November in the evening). Certificate and issued-token logins and the
+deprecated `Basic128Rsa15` and `Basic256` have not been exercised.
 
 `Sign` and `SignAndEncrypt` need a client certificate and a trust list
 for the server's certificate (step 3).

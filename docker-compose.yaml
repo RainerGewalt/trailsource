@@ -3,11 +3,12 @@
 #   make demo      build and start everything
 #   make verify    verify the journals the adapters wrote to ./.demo/journal
 #
-# The broker is Mosquitto so the stack has no dependency on TrailMQ. To route
-# the records through TrailMQ instead, replace the mosquitto service with your
-# TrailMQ backend and point mqtt.broker in configs/*.yaml at it, e.g.
-# ssl://trailmq:8883 with mqtt.tls.enabled: true and credentials via
-# TRAILSOURCE_MQTT_USERNAME / TRAILSOURCE_MQTT_PASSWORD.
+# The broker is Mosquitto so the stack depends on no particular broker. To
+# use another one, point mqtt.broker in configs/*.yaml at it, for example
+# ssl://<host>:8883 with mqtt.tls.enabled: true and credentials via
+# TRAILSOURCE_MQTT_USERNAME / TRAILSOURCE_MQTT_PASSWORD. With TrailMQ, give
+# the adapters' role publish rights on their topics first (README, "Using it
+# with TrailMQ").
 
 x-common: &common
   restart: unless-stopped

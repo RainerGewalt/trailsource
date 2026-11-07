@@ -3,6 +3,7 @@ package status
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -68,12 +69,21 @@ func TestCodesAreDocumented(t *testing.T) {
 	}
 }
 
-// When the trail-evidence repository is checked out next to this one, every
-// code must be in its catalog. CI without the sibling skips this test.
+// Every code must be in the trail-evidence catalog. The catalog is read from
+// TRAIL_EVIDENCE_DIR (CI checks out the compatible release and sets it; a
+// missing file is then an error) or from a checkout next to this repository.
 func TestCodesAreInTheTrailEvidenceCatalog(t *testing.T) {
-	raw, err := os.ReadFile("../../../trail-evidence/schema/reason-codes.json")
+	dir := os.Getenv("TRAIL_EVIDENCE_DIR")
+	required := dir != ""
+	if !required {
+		dir = filepath.Join("..", "..", "..", "trail-evidence")
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "schema", "reason-codes.json"))
 	if err != nil {
-		t.Skip("trail-evidence not checked out next to this repository")
+		if required {
+			t.Fatalf("TRAIL_EVIDENCE_DIR is set, but: %v", err)
+		}
+		t.Skip("trail-evidence not checked out next to this repository; set TRAIL_EVIDENCE_DIR")
 	}
 	var cat struct {
 		Codes []struct {

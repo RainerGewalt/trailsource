@@ -27,7 +27,7 @@ Every record is one JSON object (one line in a journal file):
 | `payload` | protocol-specific, see below; hashed into `content_hash` |
 | `content_hash` | `sha256:` + hex over JCS(payload) |
 | `chain_hash` | `sha256:` + hex over JCS of the core members |
-| `context` | informational, not hashed: site, line, device, protocol, endpoint, `config_version`, mapping file name/version/hash, host |
+| `context` | informational, not hashed: site, line, device, protocol, endpoint, `config_version`, mapping file name/version/hash, and `host`, the operating-system host name of the machine the adapter runs on (it travels in every record and MQTT message) |
 
 Start, inventory and connection records, and values of bad or uncertain
 quality, carry `payload.reason_code` from the trail-evidence catalog; the
