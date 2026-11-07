@@ -8,7 +8,7 @@ body:
         Thank you for trying TrailSource. A short report helps more than anything
         else: a first run that failed is as useful as one that worked.
         Do not include passwords, tokens, private keys or confidential data
-        from your organisation. Do not post certificates, private keys or server credentials.
+        from your organisation. Do not post certificates, private keys or server credentials. Suspected vulnerabilities go to [SECURITY.md](https://github.com/RainerGewalt/trailsource/blob/main/SECURITY.md), not here.
   - type: textarea
     id: tried
     attributes:
@@ -35,7 +35,7 @@ body:
     id: beyond
     attributes:
       label: Would you use it again, or beyond this evaluation?
-      description: If yes, for what, and what would that need (a feature, documentation, rights of use, support)? A no with a reason is just as useful.
+      description: If yes, for what, and what would that need (a fix, documentation, an example, a capability)? A no with a reason is just as useful.
   - type: input
     id: version
     attributes:
