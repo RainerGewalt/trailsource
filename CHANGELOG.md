@@ -30,9 +30,12 @@ Keep a Changelog; versions follow Semantic Versioning.
 - Conformance with the trail-evidence reference vectors
   (`TestReferenceVectors`): every valid vector within the producer role is
   reproduced byte for byte, a legacy integer `seq` verifies as written, and
-  every invalid vector fails the verifier. CI checks out trail-evidence
-  v0.2.0 for it, so the reason-code catalog test now runs there too instead
-  of being skipped.
+  every invalid vector fails the verifier. CI checks out trail-evidence for
+  it, so the reason-code catalog test now runs there too instead of being
+  skipped. That showed that `source.subscription_stalled`, which TrailSource
+  0.1 emits, is in the trail-evidence catalog only after v0.2.0 (commit
+  `305b587`); CI is pinned to that commit until the next trail-evidence tag.
+  Journals with the code verify with v0.2.0 unchanged.
 - `scripts/check_demo_init.py`, run by `make ci` and in CI: the demo-only
   `chmod 0777` of `demo-init` may reach `.demo/state` and `.demo/journal`
   only (no other mount, no recursive chmod, no other path, no network).

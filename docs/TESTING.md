@@ -42,8 +42,11 @@ agree with the reference:
 
 The first three read a trail-evidence checkout from `TRAIL_EVIDENCE_DIR`,
 or from a checkout next to this repository; without one they are skipped
-locally. CI checks out trail-evidence v0.2.0 and sets the variable, so there
-they run and a missing file fails.
+locally. CI checks out trail-evidence and sets the variable, so there they
+run and a missing file fails. The checkout is pinned to v0.2.0 plus the
+catalog entry `source.subscription_stalled` (commit `305b587` on its
+`main`): TrailSource 0.1 emits that code, and the v0.2.0 tag does not list
+it yet. It moves to the next trail-evidence tag once that is published.
 
 **L4 Scenario.** Product behaviour against a running OPC UA server:
 `make scenarios` runs the seven scenarios of `docs/SCENARIOS.md` with the
