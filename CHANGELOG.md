@@ -5,6 +5,8 @@ Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+## 0.1.1 - 2026-11-07
+
 ### Fixed
 
 - `make demo` on Linux: the adapters (uid 10001) could not write
@@ -41,6 +43,11 @@ Keep a Changelog; versions follow Semantic Versioning.
   only (no other mount, no recursive chmod, no other path, no network).
 
 ### Documentation
+
+- An evaluation report issue form, a "Feedback and support" section in the
+  README (support is best effort, without a response-time promise), and
+  `SECURITY.md` with GitHub private vulnerability reporting as the one path
+  for vulnerabilities (#6).
 
 - README: what a verified journal shows is stated exactly (no edit, removal
   or reordering without re-sealing everything after it; records cut off at
