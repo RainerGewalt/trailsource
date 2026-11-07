@@ -42,7 +42,7 @@ source:
   # keepalive_interval_s: 10     # subscription keep-alive; no publish response within it (x1.5) is a stall
 
 mqtt:
-  broker: tcp://mosquitto:1883   # TrailMQ: ssl://trailmq:8883 with tls.enabled: true
+  broker: tcp://mosquitto:1883   # a broker with TLS: ssl://<host>:8883 with tls.enabled: true (TrailMQ: README)
   client_id: trailsource-opcua-extruder-01
   username: "${TRAILSOURCE_MQTT_USERNAME}"
   password: "${TRAILSOURCE_MQTT_PASSWORD}"

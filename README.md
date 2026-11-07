@@ -125,6 +125,19 @@ connection gaps as events of their own, and a hash chain that shows later
 edits. If that provenance is not needed, one of those tools alone is the
 better choice.
 
+## Using it with TrailMQ
+
+TrailSource is a standard MQTT client and needs no particular broker.
+[TrailMQ](https://github.com/RainerGewalt/TrailMQ) is a policy-controlled
+MQTT broker: every publish has to pass the role permission of the
+adapter's account and a topic rule for its topics, and topics in a
+namespace that no rule governs are denied until one does. Before the first
+run, give the adapter's role publish rights on
+`trailsource/<site>/<line>/<device>/#`. A refused publish is recorded in
+TrailMQ with identity, topic and a reason code that names the check that
+refused it. TrailMQ does not read or verify the TrailSource journal; that
+stays with `trailsource verify` and the trail-evidence verifiers.
+
 ## What it does
 
 - Connects to an OPC UA server (None, Sign or SignAndEncrypt; anonymous or
@@ -185,9 +198,11 @@ trail-evidence-py verify journal/<source-id>.jsonl
 
 - It does not write. No OPC UA Write or Call, in any configuration.
 - It does not sign records, notarise anything, or make any statement about
-  regulatory compliance. A verified journal proves that the journal is
-  internally consistent and unchanged since sealing, nothing more. Whoever
-  controls the file can rewrite and re-seal all of it.
+  regulatory compliance. A verified journal shows that it is internally
+  consistent: no record was edited, removed or reordered without re-sealing
+  everything after it. Whoever controls the file can rewrite and re-seal all
+  of it, and records cut off at the end of the journal are not detectable
+  without an anchor outside it.
 - It is not a broker, historian, dashboard or rules engine.
 
 ## Install

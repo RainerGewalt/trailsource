@@ -8,6 +8,9 @@ coverage.out
 # demo runtime data (chain state, journals, snapshots)
 /.demo/
 
+# trail-evidence checkout for the conformance tests (CI, or TRAIL_EVIDENCE_DIR)
+/.trail-evidence/
+
 # python
 __pycache__/
 *.pyc

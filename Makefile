@@ -52,10 +52,11 @@ vet:
 py-compile:
 	$(PYTHON) -m py_compile adapters/modbus/main.py adapters/ethernetip/main.py \
 	  adapters/pylib/trailsource_adapter/runtime.py sim/opcua/main.py sim/modbus/main.py sim/ethernetip/main.py \
-	  scripts/tamper.py scripts/tcp_relay.py scripts/check_bindings.py
+	  scripts/tamper.py scripts/tcp_relay.py scripts/check_bindings.py scripts/check_demo_init.py
 
 compose-config:
 	$(COMPOSE) config >/dev/null
+	$(COMPOSE) config --format json | $(PYTHON) scripts/check_demo_init.py "$(CURDIR)"
 
 ci: fmt vet test py-compile compose-config
 

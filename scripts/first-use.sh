@@ -275,7 +275,7 @@ done
 kill "$adapter"
 wait "$adapter" 2>/dev/null || true
 ok "retained health with last_event, $(count '"source.value.observed"' "$journal") value records, orderly stop"
-run_cli 0 '^OK' "$ts" verify "$journal"
+run_cli 0 ': OK, [0-9]+ records' "$ts" verify "$journal"
 "$ts" report "$journal" --html "$own/report.html" >/dev/null || fail "report --html"
 ok "report $own/report.html"
 # README, "What has changed since it was recorded?": one value edited in a copy.
@@ -309,7 +309,7 @@ mosquitto_sub -h localhost -t 'trailsource/#' -v >"$work/logs/demo-topics.log" 2
 pids+=($!)
 wait_for "$work/logs/demo-topics.log" '^trailsource/plant-a/ext-01/extruder-01/values ' "value record from the demo OPC UA adapter"
 docker compose stop opcua-adapter modbus-adapter ethernetip-adapter >/dev/null 2>&1 || fail "stopping the demo adapters"
-run_cli 0 'OK' make verify
+run_cli 0 'opcua\.jsonl: OK, [0-9]+ records' make verify
 make demo-down >/dev/null 2>&1 || fail "make demo-down"
 demo_up=0
 docker compose down -v >/dev/null 2>&1 || true
