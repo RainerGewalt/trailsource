@@ -46,6 +46,9 @@ Keep a Changelog; versions follow Semantic Versioning.
   before the first run, TrailMQ does not read the journal. The comments in
   `docker-compose.yaml` and `configs/opcua-extruder.yaml` no longer suggest
   more than that.
+- `docs/CONNECT_YOUR_SERVER.md`, step 2: names the security policies and
+  logins that the interoperability runs of 3 November covered, instead of
+  only the first two.
 - README "Install": create `pki`, `state` and `journal` before the first
   `docker run` (Docker creates a missing bind-mount directory as root),
   mount the mapping directory, and state the Go 1.24 requirement for
