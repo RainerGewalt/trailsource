@@ -11,16 +11,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # Conformance (docs/TESTING.md, L3): the reference vectors and the
-      # reason-code catalog of trail-evidence. Pinned to v0.2.0 plus the
-      # catalog entry source.subscription_stalled (commit 305b587 on main),
-      # which TrailSource 0.1 emits and the v0.2.0 tag does not contain yet;
-      # switch to the next trail-evidence tag once it is published. The
-      # vectors are those of v0.2.0. The go tool ignores directories that
+      # reason-code catalog of the trail-evidence release this adapter is
+      # compatible with. v0.2.1 is the first tag whose catalog lists
+      # source.subscription_stalled. The go tool ignores directories that
       # start with a dot.
       - uses: actions/checkout@v4
         with:
           repository: RainerGewalt/trail-evidence
-          ref: 305b5879a74348a4be61ba81d511958e1dcdfbaf
+          ref: v0.2.1
           path: .trail-evidence
       - uses: actions/setup-go@v5
         with:
