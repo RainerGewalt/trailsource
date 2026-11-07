@@ -46,6 +46,8 @@ Keep a Changelog; versions follow Semantic Versioning.
   before the first run, TrailMQ does not read the journal. The comments in
   `docker-compose.yaml` and `configs/opcua-extruder.yaml` no longer suggest
   more than that.
+- `docs/RECORD_MAPPING.md`: `context.host` is the operating-system host name
+  of the adapter's machine and travels in every record and MQTT message.
 - `docs/CONNECT_YOUR_SERVER.md`, step 2: names the security policies and
   logins that the interoperability runs of 3 November covered, instead of
   only the first two.
