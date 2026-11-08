@@ -318,15 +318,21 @@ ok "values over MQTT, make verify, make demo-down"
 
 # ---------------------------------------------------------------------------
 step "Independent verifier trail-evidence (L3)"
-if command -v trail-evidence >/dev/null 2>&1; then
+# L3 is part of the gate: the pinned reference verifier is installed for this
+# run, its version is checked, and the step fails if either does not happen.
+# A trail-evidence already on PATH is not used, because its version is unknown.
+TE_VERSION="${TRAIL_EVIDENCE_VERSION:-v0.2.1}"
+te="$work/bin/trail-evidence"
+GOBIN="$work/bin" go install "github.com/RainerGewalt/trail-evidence/go/cmd/trail-evidence@$TE_VERSION" 2>"$work/logs/trail-evidence-install.log" \
+	|| fail "go install trail-evidence@$TE_VERSION failed (see $work/logs/trail-evidence-install.log); the independent verification is part of this gate and cannot be skipped"
+te_reported="$("$te" version 2>/dev/null | awk '{print $2}')"
+[[ $te_reported == "$TE_VERSION" ]] || fail "trail-evidence reports '$te_reported', want $TE_VERSION"
+ok "independent verifier trail-evidence $TE_VERSION installed into $work/bin for this run"
 	for s in inventory-change gap restart server-restart half-open silent-subscription; do
-		run_cli 0 '^VALID' trail-evidence verify "$(j "$s")"
+		run_cli 0 '^VALID' "$te" verify "$(j "$s")"
 	done
-	run_cli 0 '^VALID' trail-evidence verify "$own/journal/plant-a-ext-01-extruder-01-opcua.jsonl"
-	run_cli 1 '^INVALID' trail-evidence verify "$own/edited.jsonl"
-else
-	echo "    skipped: trail-evidence is not on PATH (go install github.com/RainerGewalt/trail-evidence/go/cmd/trail-evidence@v0.2.0)"
-fi
+	run_cli 0 '^VALID' "$te" verify "$own/journal/plant-a-ext-01-extruder-01-opcua.jsonl"
+	run_cli 1 '^INVALID' "$te" verify "$own/edited.jsonl"
 
 if [[ -n $RELEASE ]]; then
 	printf '\nFIRST-USE PASSED: %d steps, published release %s\n' "$steps" "$RELEASE"
