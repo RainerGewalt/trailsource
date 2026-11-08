@@ -318,14 +318,23 @@ ok "values over MQTT, make verify, make demo-down"
 
 # ---------------------------------------------------------------------------
 step "Independent verifier trail-evidence (L3)"
-if command -v trail-evidence >/dev/null 2>&1; then
+TE_VERSION="${TRAIL_EVIDENCE_VERSION:-v0.2.1}"
+te=trail-evidence
+if ! command -v trail-evidence >/dev/null 2>&1; then
+	if GOBIN="$work/bin" go install "github.com/RainerGewalt/trail-evidence/go/cmd/trail-evidence@$TE_VERSION" 2>"$work/logs/trail-evidence-install.log"; then
+		te="$work/bin/trail-evidence"
+		ok "trail-evidence $TE_VERSION installed into $work/bin for this run"
+	else
+		te=""
+		echo "    skipped: trail-evidence is not on PATH and go install …@$TE_VERSION failed (see $work/logs/trail-evidence-install.log)"
+	fi
+fi
+if [[ -n $te ]]; then
 	for s in inventory-change gap restart server-restart half-open silent-subscription; do
-		run_cli 0 '^VALID' trail-evidence verify "$(j "$s")"
+		run_cli 0 '^VALID' "$te" verify "$(j "$s")"
 	done
-	run_cli 0 '^VALID' trail-evidence verify "$own/journal/plant-a-ext-01-extruder-01-opcua.jsonl"
-	run_cli 1 '^INVALID' trail-evidence verify "$own/edited.jsonl"
-else
-	echo "    skipped: trail-evidence is not on PATH (go install github.com/RainerGewalt/trail-evidence/go/cmd/trail-evidence@v0.2.0)"
+	run_cli 0 '^VALID' "$te" verify "$own/journal/plant-a-ext-01-extruder-01-opcua.jsonl"
+	run_cli 1 '^INVALID' "$te" verify "$own/edited.jsonl"
 fi
 
 if [[ -n $RELEASE ]]; then

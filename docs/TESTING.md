@@ -121,7 +121,7 @@ Recorded controls:
 ## CI
 
 `.github/workflows/ci.yml` runs gofmt, build, vet and the Go tests with
-trail-evidence v0.2.0 checked out, the Python compile and unit tests, and the
+trail-evidence v0.2.1 checked out, the Python compile and unit tests, and the
 Compose configuration with the demo-init check, on every push and pull
 request. The scenarios and `make first-use` are not part of CI: they need a
 local Mosquitto, the simulator and Docker on fixed ports. They run by hand

@@ -181,16 +181,16 @@ stays with `trailsource verify` and the trail-evidence verifiers.
 The record format is the Trail Evidence Record v1 (see
 `docs/RECORD_MAPPING.md`). Canonicalisation uses `github.com/gowebpki/jcs`;
 journals written by TrailSource verify with the
-[trail-evidence](https://github.com/RainerGewalt/trail-evidence) v0.2.0
+[trail-evidence](https://github.com/RainerGewalt/trail-evidence) v0.2.1
 reference verifier with the same findings. It comes as a Go binary,
 `trail-evidence`, and as a Python package whose command is
 `trail-evidence-py`:
 
 ```sh
-go install github.com/RainerGewalt/trail-evidence/go/cmd/trail-evidence@v0.2.0
+go install github.com/RainerGewalt/trail-evidence/go/cmd/trail-evidence@v0.2.1
 trail-evidence verify journal/<source-id>.jsonl
 
-pip install trail-evidence==0.2.0
+pip install trail-evidence==0.2.1
 trail-evidence-py verify journal/<source-id>.jsonl
 ```
 
