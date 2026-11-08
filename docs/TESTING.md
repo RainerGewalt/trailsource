@@ -108,6 +108,14 @@ Recorded controls:
 - `TestReferenceVectors`: with `anchor_hash` left out of the core, the
   vector `chain-restart` fails on core JCS and `chain_hash`; restored, it
   passes.
+- `make first-use`, step "Independent verifier trail-evidence (L3)": the
+  step installs the pinned trail-evidence (`TRAIL_EVIDENCE_VERSION`,
+  default v0.2.1) into the run's own `bin/`, checks the reported version
+  and verifies every journal with it; a verifier already on PATH is not
+  used. Control: `TRAIL_EVIDENCE_VERSION=v0.0.0-missing make first-use`
+  fails at that step with `go install trail-evidence@v0.0.0-missing
+  failed … cannot be skipped` (exit 1); with the default it passes. Before
+  this change the step printed `skipped` and the run ended green.
 
 ## Commands
 
