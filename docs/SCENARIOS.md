@@ -1,11 +1,12 @@
 # Scenarios
 
-Seven short demonstrations, one command each, that show what TrailSource
-records when something happens at the source: the address space changes,
-the server goes away or restarts changed, the connection goes silent, the
-subscription goes silent while the session lives, the adapter restarts, or
-someone edits the journal. They run as local processes
-in under a minute each. No Grafana, no hardware, no Docker.
+Eight short demonstrations, one command each, that show what TrailSource
+records when something happens: the address space changes, the server
+goes away or restarts changed, the connection goes silent, the
+subscription goes silent while the session lives, the adapter restarts,
+someone edits the journal, or the MQTT broker fails while the source runs
+on. They run as local processes in under a minute each (broker-outage in
+about a minute and a half). No Grafana, no hardware, no Docker.
 
 ```sh
 make scenario-inventory-change   # which address space was valid, and what changed
@@ -15,7 +16,8 @@ make scenario-tamper             # an edit is found, even a re-sealed one
 make scenario-server-restart     # the server comes back reordered and renumbered: same bindings
 make scenario-half-open          # the connection stays open but goes silent
 make scenario-silent-subscription  # reads answered, publish responses gone
-make scenarios                   # all seven
+make scenario-broker-outage      # the broker freezes and dies: no gap or stall of the source
+make scenarios                   # all eight
 ```
 
 Every scenario ends with `trailsource verify`, `scripts/check_bindings.py`
@@ -44,8 +46,9 @@ along. The runner is `scripts/scenario.sh`.
   otherwise the first of `python3`, `/usr/bin/python3` and `python` that
   can import `asyncua`; set `SIM_PYTHON` to choose explicitly.
 
-Ports are configurable with `SCENARIO_MQTT_PORT` and `SCENARIO_OPC_PORT`
-(default 48400). The adapter configuration for all scenarios is
+Ports are configurable with `SCENARIO_MQTT_PORT` (default 18830) and
+`SCENARIO_OPC_PORT` (default 48400; half-open and silent-subscription also
+use the next port). The adapter configuration for all scenarios is
 `configs/scenario/opcua-local.yaml`; the runner fills its placeholders.
 
 ## inventory-change
@@ -270,6 +273,32 @@ The chain is intact and the journal verifies as `valid`: the gap is in
 what the adapter observed, not in what it recorded, and the record says
 so.
 
+## broker-outage
+
+The OPC UA server runs throughout; only the transport fails. The runner
+freezes its Mosquitto for 30 s (SIGSTOP: the connection stays open,
+nothing is acknowledged), lets it continue, kills it (SIGKILL), and starts
+a new one 20 s later (`SCENARIO_FREEZE_S`, `SCENARIO_KILL_S`). The
+keep-alive window is 3 s, as in silent-subscription, against an MQTT
+publish that waits up to 15 s: if the stall supervision measured the
+adapter's own waiting instead of the server, it would fire.
+
+The run waits until a value read after the broker's restart is in the
+journal, then checks with `scripts/check_broker_outage.py`, besides
+`verify` and the bindings:
+
+1. no `source.subscription_stalled`, no `common.gap`, and no connection
+   record other than the start and the orderly stop;
+2. every value's `read_at` is at most 5 s after its source timestamp:
+   `read_at` is when the value reached the adapter, not when the adapter
+   got round to sealing it.
+
+The journal falls behind the source during the outage and catches up
+afterwards (docs/ARCHITECTURE.md, "Broker outage"); records whose publish
+failed are in the journal and not sent again, so an MQTT subscriber sees
+gaps in `seq`. This scenario needs the runner's own broker; it refuses
+`SCENARIO_BROKER=external`.
+
 ## The same scenarios against the container stack
 
 `make demo` runs the simulators, Mosquitto and the adapters in Docker and
@@ -285,6 +314,7 @@ the change that added the local scenarios.
 | tamper | Copy `.demo/journal/plant-a-ext-01-extruder-01-opcua.jsonl` and run `scripts/tamper.py` on the copy, as above. |
 | server-restart | `docker compose stop opcua-sim`, then start it with `SIM_REVERSE_ORDER=1 SIM_EXTRA_NAMESPACE=1 SIM_BARREL_ZONES=7` in its environment (`docker compose run` or an override file). |
 | half-open, silent-subscription | Not with the stack as it is; they need the relay between adapter and simulator. |
+| broker-outage | `docker compose pause mosquitto`, wait, `docker compose unpause mosquitto`; then `docker compose kill mosquitto`, wait, `docker compose start mosquitto`. |
 
 Then `make verify` and
 `./bin/trailsource report .demo/journal/plant-a-ext-01-extruder-01-opcua.jsonl --html report.html`.

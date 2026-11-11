@@ -383,7 +383,8 @@ func TestSessionInfoCarriesNoCredentials(t *testing.T) {
 }
 
 func TestStallWindowZeroMeansOff(t *testing.T) {
-	m := &monitor{lastPublish: time.Now().Add(-time.Hour)}
+	m := &monitor{}
+	m.lastArrival.Store(time.Now().Add(-time.Hour).UnixNano())
 	if m.stalled(time.Now()) {
 		t.Fatal("window 0 (heartbeat rejected) must never report a stall")
 	}

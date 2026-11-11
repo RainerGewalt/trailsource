@@ -268,6 +268,8 @@ func (a *Adapter) session(ctx context.Context) (connected bool, err error) {
 	defer func() {
 		if !dead { // on a dead connection cancelling only waits for a timeout
 			mon.cancel()
+		} else {
+			mon.close()
 		}
 	}()
 	if err := a.syncMonitor(ctx, mon, nodes); err != nil {
@@ -603,7 +605,7 @@ func (a *Adapter) watch(ctx context.Context, client *opcua.Client, info sessionI
 				// rebuild the subscription, and declare the gap when data
 				// flows again.
 				if !stalled {
-					stalled, stalledSince = true, mon.lastPublish
+					stalled, stalledSince = true, mon.lastPublish()
 					a.emitStall(mon, now)
 				}
 				oldID := mon.sub.SubscriptionID
@@ -623,23 +625,24 @@ func (a *Adapter) watch(ctx context.Context, client *opcua.Client, info sessionI
 			if !open {
 				return false, errors.New("opc notification channel closed")
 			}
-			if n == nil {
+			if n.PublishNotificationData == nil {
 				continue
 			}
 			if n.Error != nil {
 				return false, fmt.Errorf("opc notification: %w", n.Error)
 			}
-			now := time.Now()
-			mon.lastPublish = now
+			// n.at is when the response reached the adapter. The adapter may
+			// get to it later (an MQTT publish can wait up to 15 s per
+			// record); read_at and a declared gap use the arrival time.
 			if stalled {
 				stalled = false
-				a.emitGap(stalledSince, now, status.SubscriptionStalled, mon.sub.SubscriptionID)
+				a.emitGap(stalledSince, n.at, status.SubscriptionStalled, mon.sub.SubscriptionID)
 			}
 			dcn, isDCN := n.Value.(*ua.DataChangeNotification)
 			if !isDCN {
 				continue
 			}
-			readAt := time.Now()
+			readAt := n.at
 			a.seen(readAt)
 			for _, item := range dcn.MonitoredItems {
 				if item.ClientHandle == heartbeatHandle {
@@ -839,7 +842,7 @@ func (a *Adapter) emitStall(mon *monitor, now time.Time) {
 		"state":                          "stalled",
 		"reason_code":                    status.SubscriptionStalled,
 		"subscription_id":                mon.sub.SubscriptionID,
-		"last_publish_at":                evidence.FormatTime(mon.lastPublish),
+		"last_publish_at":                evidence.FormatTime(mon.lastPublish()),
 		"detected_at":                    evidence.FormatTime(now),
 		"keepalive_window_ms":            mon.window.Milliseconds(),
 		"revised_publishing_interval_ms": mon.sub.RevisedPublishingInterval.Milliseconds(),

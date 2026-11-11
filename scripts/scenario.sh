@@ -4,6 +4,7 @@
 #
 #   scripts/scenario.sh inventory-change | gap | restart | tamper
 #                       server-restart | half-open | silent-subscription
+#                       broker-outage
 #
 # Needs: ./bin/trailsource (make build), mosquitto on PATH, a Python with
 # asyncua for the simulator: make sim-venv installs sim/opcua/requirements.txt
@@ -15,6 +16,8 @@
 #   SCENARIO_OPC_PORT    port the adapter connects to    (default 48400; the
 #                        simulator's, or the relay's in half-open)
 #   SCENARIO_GAP_S       seconds the simulator stays off (default 8)
+#   SCENARIO_FREEZE_S    broker-outage: seconds the broker is frozen (default 30)
+#   SCENARIO_KILL_S      broker-outage: seconds the broker is gone (default 20)
 #   SIM_PYTHON           Python interpreter with asyncua (auto-detected)
 #   SCENARIO_BROKER      "external" to use a broker already on SCENARIO_MQTT_PORT
 set -euo pipefail
@@ -23,8 +26,8 @@ cd "$(dirname "$0")/.."
 ROOT=$PWD
 NAME=${1:-}
 case "$NAME" in
-  inventory-change|gap|restart|tamper|server-restart|half-open|silent-subscription) ;;
-  *) echo "usage: $0 inventory-change|gap|restart|tamper|server-restart|half-open|silent-subscription" >&2; exit 2 ;;
+  inventory-change|gap|restart|tamper|server-restart|half-open|silent-subscription|broker-outage) ;;
+  *) echo "usage: $0 inventory-change|gap|restart|tamper|server-restart|half-open|silent-subscription|broker-outage" >&2; exit 2 ;;
 esac
 
 export SCENARIO_MQTT_PORT=${SCENARIO_MQTT_PORT:-18830}
@@ -78,7 +81,10 @@ stop_pid() {
   wait "$pid" 2>/dev/null || true
 }
 RELAY_PID=
-cleanup() { stop_pid "$ADAPTER_PID"; stop_pid "$RELAY_PID"; stop_pid "$SIM_PID"; stop_pid "$BROKER_PID"; }
+cleanup() {
+  if [ -n "$BROKER_PID" ]; then kill -CONT "$BROKER_PID" 2>/dev/null || true; fi # broker-outage may leave it frozen
+  stop_pid "$ADAPTER_PID"; stop_pid "$RELAY_PID"; stop_pid "$SIM_PID"; stop_pid "$BROKER_PID"
+}
 trap cleanup EXIT
 
 start_broker() {
@@ -113,6 +119,17 @@ wait_port() {
   die "$2 did not open port $1 (see $SCENARIO_DIR/logs)"
 }
 count() { local n; n=$(grep -c -- "$1" "$JOURNAL" 2>/dev/null) || true; echo "${n:-0}"; }
+wait_log() {
+  # wait_log <fixed string> <min count> <timeout s> <description>: in the adapter log
+  local deadline=$((SECONDS + $3)) n
+  while :; do
+    n=$(grep -c -F -- "$1" "$SCENARIO_DIR/logs/adapter.log" 2>/dev/null) || true
+    [ "${n:-0}" -ge "$2" ] && break
+    [ $SECONDS -lt $deadline ] || die "timed out after $3 s waiting for $4 (see $SCENARIO_DIR/logs/adapter.log)"
+    sleep 0.5
+  done
+  echo "   seen: $4"
+}
 wait_for() {
   # wait_for <fixed string> <min count> <timeout s> <description>
   local deadline=$((SECONDS + $3))
@@ -236,6 +253,42 @@ silent-subscription)
   [ "$(count '"reason_code":"source.connection_lost"')" -eq 0 ] || die "the session should have survived, but a lost connection was recorded"
   sleep 4
   finish
+  ;;
+broker-outage)
+  [ "${SCENARIO_BROKER:-}" != "external" ] || die "broker-outage freezes and kills its own Mosquitto; run it without SCENARIO_BROKER=external"
+  # The OPC UA server runs throughout; only the transport fails. A keep-alive
+  # window of about 3 s against an MQTT publish that waits up to 15 s: if
+  # the stall supervision measured the adapter's own waiting, it would fire.
+  export SCENARIO_KEEPALIVE_S=2
+  FREEZE_S=${SCENARIO_FREEZE_S:-30}
+  KILL_S=${SCENARIO_KILL_S:-20}
+  start_sim 0
+  start_adapter
+  wait_for '"reason_code":"source.inventory_initial"' 1 30 "initial inventory"
+  wait_for '"source.value.observed"' 50 30 "50 value records"
+  say "broker frozen for $FREEZE_S s (SIGSTOP): the connection stays open, nothing is acknowledged"
+  kill -STOP "$BROKER_PID"
+  wait_log 'mqtt publish timeout' 1 30 "a publish that the broker did not acknowledge"
+  sleep "$FREEZE_S"
+  kill -CONT "$BROKER_PID"
+  say "broker killed (SIGKILL) for $KILL_S s, then started again"
+  kill -KILL "$BROKER_PID"; wait "$BROKER_PID" 2>/dev/null || true; BROKER_PID=
+  wait_log 'mqtt connection lost' 1 30 "the adapter noticed the lost broker"
+  sleep "$KILL_S"
+  restarted_at=$("$SIM_PYTHON" -c 'import datetime as d; print(d.datetime.now(d.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z")')
+  start_broker
+  wait_log 'mqtt connected' 2 60 "the adapter reconnected to the broker"
+  deadline=$((SECONDS + 90))
+  until "$SIM_PYTHON" scripts/check_broker_outage.py "$JOURNAL" --read-after "$restarted_at"; do
+    [ $SECONDS -lt $deadline ] || die "no value read after the broker restart was journaled within 90 s"
+    sleep 0.5
+  done
+  echo "   seen: a value read after the broker restart is in the journal (the backlog is through)"
+  sleep 2
+  set +e; finish; rc=$?; set -e
+  say "a broker outage is not a source event (scripts/check_broker_outage.py)"
+  "$SIM_PYTHON" scripts/check_broker_outage.py "$JOURNAL" || rc=1
+  [ $rc -eq 0 ] || die "the journal does not verify, or it attributes the broker outage to the OPC UA source"
   ;;
 tamper)
   start_sim 0

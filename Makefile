@@ -9,7 +9,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 
 .PHONY: help build test py-test fmt vet ci compose-config demo demo-down logs verify clean first-use \
 	scenarios scenario-inventory-change scenario-gap scenario-restart scenario-tamper \
-	scenario-server-restart scenario-half-open scenario-silent-subscription sim-venv
+	scenario-server-restart scenario-half-open scenario-silent-subscription scenario-broker-outage sim-venv
 
 help:
 	@printf '%s\n' 'TrailSource:' \
@@ -31,7 +31,8 @@ help:
 	  '  make scenario-server-restart     the server restarts reordered and renumbered: same bindings' \
 	  '  make scenario-half-open          the connection stays open but goes silent: lost, then restored' \
 	  '  make scenario-silent-subscription  reads answered, publish responses gone: stalled, gap declared' \
-	  '  make scenarios                   all seven, one after another'
+	  '  make scenario-broker-outage      the MQTT broker freezes and dies: no source gap, no stall' \
+	  '  make scenarios                   all eight, one after another'
 
 build:
 	mkdir -p bin
@@ -52,7 +53,7 @@ vet:
 py-compile:
 	$(PYTHON) -m py_compile adapters/modbus/main.py adapters/ethernetip/main.py \
 	  adapters/pylib/trailsource_adapter/runtime.py sim/opcua/main.py sim/modbus/main.py sim/ethernetip/main.py \
-	  scripts/tamper.py scripts/tcp_relay.py scripts/check_bindings.py scripts/check_demo_init.py
+	  scripts/tamper.py scripts/tcp_relay.py scripts/check_bindings.py scripts/check_demo_init.py scripts/check_broker_outage.py
 
 compose-config:
 	$(COMPOSE) config >/dev/null
@@ -75,7 +76,7 @@ verify: build
 	@ls .demo/journal/*.jsonl >/dev/null 2>&1 || { echo 'no journals in .demo/journal (run make demo first)'; exit 1; }
 	./bin/trailsource verify .demo/journal/*.jsonl
 
-scenario-inventory-change scenario-gap scenario-restart scenario-tamper scenario-server-restart scenario-half-open scenario-silent-subscription: scenario-%: build
+scenario-inventory-change scenario-gap scenario-restart scenario-tamper scenario-server-restart scenario-half-open scenario-silent-subscription scenario-broker-outage: scenario-%: build
 	scripts/scenario.sh $*
 
 # Newest Python 3.9 or newer on PATH for the simulator venv: asyncua 1.1.8
@@ -89,7 +90,7 @@ sim-venv:
 	$(SIM_VENV_PYTHON) -m venv .demo/sim-venv
 	.demo/sim-venv/bin/pip install -q -r sim/opcua/requirements.txt
 
-scenarios: scenario-inventory-change scenario-gap scenario-restart scenario-tamper scenario-server-restart scenario-half-open scenario-silent-subscription
+scenarios: scenario-inventory-change scenario-gap scenario-restart scenario-tamper scenario-server-restart scenario-half-open scenario-silent-subscription scenario-broker-outage
 
 first-use:
 	RELEASE=$(RELEASE) ./scripts/first-use.sh

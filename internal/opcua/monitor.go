@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"sync/atomic"
 	"time"
 
 	"github.com/gopcua/opcua"
@@ -21,6 +22,18 @@ const heartbeatHandle = math.MaxUint32
 // cycle counts as stalled.
 const stallTolerance = 1.5
 
+// notifyBuffer is the number of publish responses that wait for the
+// adapter, in gopcua's channel and again in the monitor's: while the
+// adapter is busy, for example waiting for the MQTT broker, responses keep
+// arriving and keep their arrival time.
+const notifyBuffer = 1024
+
+// notification is a publish response with the time it reached the adapter.
+type notification struct {
+	*opcua.PublishNotificationData
+	at time.Time
+}
+
 // monitor is the one subscription of a session and the monitored items in
 // it, keyed by the NodeId the server uses in this session.
 type monitor struct {
@@ -29,16 +42,20 @@ type monitor struct {
 	kaCount  uint32 // requested MaxKeepAliveCount
 
 	sub      *opcua.Subscription
-	notifyCh chan *opcua.PublishNotificationData
+	raw      chan *opcua.PublishNotificationData // filled by gopcua
+	notifyCh chan notification                   // filled by forward, read by the adapter
+	stop     chan struct{}                       // ends forward for this subscription
 	byHandle map[uint32]*boundNode
 	byNode   map[string]uint32 // NodeId string -> client handle
 	itemIDs  map[uint32]uint32 // client handle -> server's MonitoredItemID
 	next     uint32
 
-	// lastPublish is the arrival of the last publish response that carried
-	// notifications. gopcua does not pass keep-alive responses on, so the
-	// heartbeat item makes every publishing interval carry data.
-	lastPublish time.Time
+	// lastArrival (Unix nanoseconds) is when the last publish response that
+	// carried notifications reached the adapter, stamped by forward as it
+	// arrives, not when the adapter got round to it. gopcua does not pass
+	// keep-alive responses on, so the heartbeat item makes every publishing
+	// interval carry data.
+	lastArrival atomic.Int64
 	window      time.Duration // revised MaxKeepAliveCount x revised interval x tolerance
 }
 
@@ -53,7 +70,7 @@ func newMonitor(ctx context.Context, client *opcua.Client, interval time.Duratio
 // open creates the subscription and its heartbeat item; monitored items are
 // added by syncMonitor.
 func (m *monitor) open(ctx context.Context) error {
-	ch := make(chan *opcua.PublishNotificationData, 1024)
+	ch := make(chan *opcua.PublishNotificationData, notifyBuffer)
 	lifetime := uint32(10000)
 	if 3*m.kaCount > lifetime {
 		lifetime = 3 * m.kaCount // the lifetime must cover three keep-alive periods
@@ -77,9 +94,14 @@ func (m *monitor) open(ctx context.Context) error {
 		log.Printf("heartbeat item on ServerStatus.CurrentTime rejected (%s): stall detection is off for this subscription", res.Results[0].StatusCode)
 		heartbeat = false
 	}
-	m.sub, m.notifyCh = sub, ch
+	if m.stop != nil {
+		close(m.stop) // the previous subscription's forwarder
+	}
+	m.sub, m.raw = sub, ch
+	m.notifyCh, m.stop = make(chan notification, notifyBuffer), make(chan struct{})
+	go m.forward(m.raw, m.notifyCh, m.stop)
 	m.byHandle, m.byNode, m.itemIDs, m.next = map[uint32]*boundNode{}, map[string]uint32{}, map[uint32]uint32{}, 1
-	m.lastPublish = time.Now()
+	m.lastArrival.Store(time.Now().UnixNano())
 	m.window = time.Duration(float64(time.Duration(sub.RevisedMaxKeepAliveCount)*sub.RevisedPublishingInterval) * stallTolerance)
 	if m.window < 2*time.Second {
 		m.window = 2 * time.Second
@@ -92,10 +114,47 @@ func (m *monitor) open(ctx context.Context) error {
 	return nil
 }
 
-// stalled reports whether the publish cycle has been silent for longer than
-// the keep-alive window.
+// forward stamps every publish response with the time it reached the
+// adapter and passes it on, until stop is closed. A closed raw channel is
+// passed on as a closed out channel.
+func (m *monitor) forward(raw <-chan *opcua.PublishNotificationData, out chan<- notification, stop <-chan struct{}) {
+	for {
+		select {
+		case <-stop:
+			return
+		case n, ok := <-raw:
+			if !ok {
+				close(out)
+				return
+			}
+			at := time.Now()
+			if n != nil && n.Error == nil {
+				m.lastArrival.Store(at.UnixNano())
+			}
+			select {
+			case out <- notification{n, at}:
+			case <-stop:
+				return
+			}
+		}
+	}
+}
+
+// lastPublish is the arrival time of the last publish response.
+func (m *monitor) lastPublish() time.Time {
+	return time.Unix(0, m.lastArrival.Load())
+}
+
+// stalled reports whether the server's publish cycle has been silent for
+// longer than the keep-alive window. It measures the server, not the
+// adapter: a response that arrived while the adapter was busy, for
+// example waiting for the MQTT broker, has its arrival time, and a
+// response that still waits to be handled proves the cycle is alive.
 func (m *monitor) stalled(now time.Time) bool {
-	return m.window > 0 && now.Sub(m.lastPublish) > m.window
+	if m.window <= 0 || len(m.notifyCh) > 0 || len(m.raw) > 0 {
+		return false
+	}
+	return now.Sub(m.lastPublish()) > m.window
 }
 
 // rebuild replaces a stalled subscription; the caller re-adds the monitored
@@ -117,6 +176,15 @@ func (m *monitor) cancel() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = m.sub.Cancel(ctx)
+	m.close()
+}
+
+// close ends the forwarder; the session is over.
+func (m *monitor) close() {
+	if m.stop != nil {
+		close(m.stop)
+		m.stop = nil
+	}
 }
 
 // syncMonitor makes the monitored items match the browsed nodes: items of

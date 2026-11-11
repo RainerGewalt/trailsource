@@ -50,7 +50,7 @@ first tag whose catalog lists `source.subscription_stalled`, and set the
 variable.
 
 **L4 Scenario.** Product behaviour against a running OPC UA server:
-`make scenarios` runs the seven scenarios of `docs/SCENARIOS.md` with the
+`make scenarios` runs the eight scenarios of `docs/SCENARIOS.md` with the
 bundled simulator, a local Mosquitto and the adapter as plain processes, and
 each one checks its own outcome (records, verification, bindings).
 `docs/INTEROP.md` records the runs against servers of other
@@ -59,7 +59,7 @@ implementations; those are manual.
 **L5 First use.** `make first-use` (`scripts/first-use.sh`) walks through the
 README and `docs/CONNECT_YOUR_SERVER.md` as a new user would and stops at the
 first step that does not behave as documented: install, `make sim-venv`, the
-seven scenarios, the report, the guide for your own server (played by the
+eight scenarios, the report, the guide for your own server (played by the
 bundled simulator, including the documented failure of an unchanged example
 configuration and a tampered copy of the journal), the Docker demo stack, and
 the reference verifier.
@@ -130,13 +130,28 @@ Recorded controls:
   GO-2026-6859, and the toolchain check fails because the Dockerfile names
   1.26.11; with 1.26.11 both pass.
 
+- `make scenario-broker-outage` (`scripts/check_broker_outage.py`):
+  against 0.1.1 it failed in all three runs of 11 November. Once on
+  `read_at`, which lagged up to 74 s behind the source timestamp; twice
+  with a sealed `source.subscription_stalled` and a `common.gap` of about
+  75 s while the server kept publishing, and the rebuilt subscription
+  dropped the responses that were waiting, so about 100 instead of about
+  700 value records reached the journal. Which of the two happens depends
+  on which `select` case runs first after a blocked publish. Control: with `read_at` taken when the adapter
+  handles the value instead of when it arrived, the scenario fails the
+  same way; restored, it passes. `TestQueuedResponseIsNotAStall` fails
+  when `stalled` ignores waiting responses, and
+  `TestForwarderStampsArrivalWhileTheAdapterIsBusy` fails when the
+  forwarder does not stamp the arrival.
+
 ## Commands
 
 - `make test`: Go tests and the Python unit tests (L1, L2, L3 when a
   trail-evidence checkout is available).
 - `make ci`: gofmt, vet, tests, Python compile, Compose configuration and
   the demo-init check.
-- `make scenarios`: L4.
+- `make scenarios`: L4. `SCENARIO_MQTT_PORT` and `SCENARIO_OPC_PORT` move
+  its ports; `make first-use` passes them on.
 - `make first-use`, `make first-use RELEASE=x.y.z`: L3 to L5.
 
 ## CI

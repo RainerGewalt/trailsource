@@ -93,7 +93,11 @@ connect ──> browse ──> reconcile ──> subscribe ──(rebrowse timer
   (never recorded), so each publishing interval carries data; gopcua does
   not pass keep-alive responses on. No publish response within the
   revised MaxKeepAliveCount times the revised publishing interval, times
-  1.5, means the publish cycle stalled although the session answers: a
+  1.5, means the publish cycle stalled although the session answers. The
+  window is measured from the arrival of the last publish response, which
+  is stamped when it reaches the adapter, and a response that still waits
+  to be handled always counts as alive: time the adapter spends waiting
+  for the MQTT broker is never a stall of the source. Then: a
   `source.subscription.changed` record (`source.subscription_stalled`), a
   new subscription created before the old one is deleted (so gopcua never
   pauses its publish loop), all monitored items re-added, and a
@@ -111,9 +115,35 @@ connect ──> browse ──> reconcile ──> subscribe ──(rebrowse timer
 For every record: seal (assign `seq`, `prev_hash`, hashes; persist chain
 state), append to the journal, publish to MQTT. A record that could not be
 sealed or journaled is not published. A record that was journaled but whose
-publish failed is still in the journal and the chain; the broker side will
-see a gap in topics but the journal is complete. This is the intended
-priority: local evidence before transport.
+publish failed (no acknowledgement within 15 s) stays in the journal and the
+chain; it is not sent again, and MQTT subscribers see the gap in `seq`.
+
+## Broker outage
+
+The source and the transport are kept apart: a broker that stops
+answering or goes away is never recorded as a gap, a stall or a lost
+connection of the OPC UA source (`make scenario-broker-outage`, docs/SCENARIOS.md).
+
+- Publish responses from the server keep arriving while the adapter waits
+  for the broker. Each is stamped with its arrival time, which becomes the
+  value's `read_at`, and waits in a queue (1024 responses in TrailSource,
+  1024 more in the OPC UA stack).
+- The publish is synchronous and runs in the same loop as sealing: while
+  the broker does not acknowledge, the adapter waits up to 15 s per record
+  before it seals the next one. The journal therefore falls behind the
+  source during an outage (by up to 75 s in the scenario: 30 s frozen, 20 s
+  gone) and catches up once the broker is back; `recorded_at` minus
+  `read_at` shows the delay.
+- Limit of 0.1: when both queues are full, at one publish response per
+  500 ms after roughly 17 minutes of outage (computed, not measured), the
+  OPC UA stack stops asking for publish responses, the server keeps only
+  its monitored-item queues (TrailSource asks for 10 values per item) and
+  drops older values, and no record says so. A journal that is written
+  independently of MQTT is not part of 0.1.
+- The adapter starts only with a reachable broker: `run` waits up to 25 s
+  for the first MQTT connection and then ends with an error that names the
+  broker. No record is sealed before; the journal file may already exist,
+  empty.
 
 ## State files
 

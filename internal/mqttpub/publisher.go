@@ -94,7 +94,9 @@ func New(options Options) (*Publisher, error) {
 	client := mqtt.NewClient(co)
 	token := client.Connect()
 	if !token.WaitTimeout(25 * time.Second) {
-		return nil, fmt.Errorf("mqtt connect timeout")
+		// The adapter starts only with a broker: no record is sealed before
+		// this connection exists (docs/ARCHITECTURE.md, "Broker outage").
+		return nil, fmt.Errorf("mqtt connect timeout: no connection to %s within 25 s; start the broker or correct mqtt.broker", options.Broker)
 	}
 	if err := token.Error(); err != nil {
 		return nil, fmt.Errorf("mqtt connect: %w", err)

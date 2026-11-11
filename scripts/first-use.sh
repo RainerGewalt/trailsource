@@ -12,10 +12,11 @@
 # It needs what the README asks of a user: git, the Go of go.mod (1.26.11 or
 # newer; an older go with GOTOOLCHAIN=auto fetches it), Mosquitto
 # (broker and mosquitto_sub), Python 3.9 or newer, Docker with Compose v2, and
-# free ports: 18830, 48400 and 48401 (scenarios), 18831 and 48410 (your own
-# server, played by the bundled simulator), 1883, 4840, 5020 and 8080 (demo
-# stack). If the independent verifier trail-evidence is on PATH, the journals
-# are also checked with it (L3); otherwise that step says it was skipped.
+# free ports: 18830, 48400 and 48401 (scenarios; SCENARIO_MQTT_PORT and
+# SCENARIO_OPC_PORT move them), 18831 and 48410 (your own server, played by
+# the bundled simulator), 1883, 4840, 5020 and 8080 (demo stack). The
+# journals are checked with the pinned independent verifier trail-evidence,
+# which this script installs for the run (L3); that step cannot be skipped.
 #
 # FIRST_USE_KEEP=1 keeps the working directory for inspection.
 set -euo pipefail
@@ -29,6 +30,9 @@ MODULE="github.com/RainerGewalt/trailsource/cmd/trailsource"
 WAIT="${FIRST_USE_WAIT:-120}"
 OWN_MQTT=18831
 OWN_OPC=48410
+export SCENARIO_MQTT_PORT="${SCENARIO_MQTT_PORT:-18830}"
+export SCENARIO_OPC_PORT="${SCENARIO_OPC_PORT:-48400}"
+SC_PORTS="$SCENARIO_MQTT_PORT $SCENARIO_OPC_PORT $((SCENARIO_OPC_PORT + 1))"
 
 here="$(cd "$(dirname "$0")/.." && pwd)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/trailsource-first-use.XXXXXX")"
@@ -137,8 +141,8 @@ gov="$(cd "$here" && go env GOVERSION 2>/dev/null)" ||
 	fail "go cannot build this module: go.mod requires Go $gowant (with GOTOOLCHAIN=local an older go stops here)"
 [[ "$(printf '%s\n%s\n' "$gowant" "${gov#go}" | sort -V | head -n 1)" == "$gowant" ]] ||
 	fail "Go $gov is older than $gowant, which go.mod requires"
-for port in 18830 48400 48401 $OWN_MQTT $OWN_OPC 1883 4840 5020 8080; do
-	port_in_use "$port" && fail "port $port is in use (scenarios: 18830, 48400, 48401; own server: $OWN_MQTT, $OWN_OPC; demo: 1883, 4840, 5020, 8080)"
+for port in $SC_PORTS $OWN_MQTT $OWN_OPC 1883 4840 5020 8080; do
+	port_in_use "$port" && fail "port $port is in use (scenarios: ${SC_PORTS// /, }; own server: $OWN_MQTT, $OWN_OPC; demo: 1883, 4840, 5020, 8080)"
 done
 for name in trailsource_mosquitto trailsource_opcua_sim trailsource_opcua_adapter; do
 	[[ -z "$(docker ps -aq --filter "name=^${name}$")" ]] || fail "a container named $name exists; stop your own demo first (make demo-down)"
@@ -196,7 +200,7 @@ make sim-venv >"$work/logs/sim-venv.log" 2>&1 || fail "make sim-venv: $(tail -n 
 simpy="$clone/.demo/sim-venv/bin/python"
 ok "asyncua in .demo/sim-venv ($("$simpy" --version 2>&1))"
 
-step "Quick start: all seven scenarios (make scenarios)"
+step "Quick start: all eight scenarios (make scenarios)"
 make scenarios >"$work/logs/scenarios.log" 2>&1 || fail "make scenarios: $(grep -E '^scenario ' "$work/logs/scenarios.log" | tail -n 3)"
 sdir=".demo/scenarios"
 j() { echo "$sdir/$1/journal/plant-a-ext-01-extruder-01-opcua.jsonl"; }
@@ -208,7 +212,9 @@ j() { echo "$sdir/$1/journal/plant-a-ext-01-extruder-01-opcua.jsonl"; }
 	fail "restart: fewer than two common.restart records"
 [[ "$(count '"reason_code":"source.subscription_stalled"' "$(j silent-subscription)")" -ge 1 ]] ||
 	fail "silent-subscription: no source.subscription_stalled record"
-ok "seven scenarios passed; node_added, lost/restored, restart, subscription_stalled recorded"
+[[ "$(count '"reason_code":"source.subscription_stalled"' "$(j broker-outage)")" -eq 0 && "$(count '"reason_code":"common.gap"' "$(j broker-outage)")" -eq 0 ]] ||
+	fail "broker-outage: the broker outage was recorded as a stall or gap of the source"
+ok "eight scenarios passed; node_added, lost/restored, restart, subscription_stalled recorded; broker outage not blamed on the source"
 
 step "Report (README, Report)"
 html="$sdir/server-restart/report.html"
@@ -330,7 +336,7 @@ GOBIN="$work/bin" go install "github.com/RainerGewalt/trail-evidence/go/cmd/trai
 te_reported="$("$te" version 2>/dev/null | awk '{print $2}')"
 [[ $te_reported == "$TE_VERSION" ]] || fail "trail-evidence reports '$te_reported', want $TE_VERSION"
 ok "independent verifier trail-evidence $TE_VERSION installed into $work/bin for this run"
-	for s in inventory-change gap restart server-restart half-open silent-subscription; do
+	for s in inventory-change gap restart server-restart half-open silent-subscription broker-outage; do
 		run_cli 0 '^VALID' "$te" verify "$(j "$s")"
 	done
 	run_cli 0 '^VALID' "$te" verify "$own/journal/plant-a-ext-01-extruder-01-opcua.jsonl"

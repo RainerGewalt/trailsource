@@ -74,6 +74,11 @@ record seven seconds later, with its reason. `make
 scenario-silent-subscription` keeps the session answering but drops every
 publish response: the stall is a record after the keep-alive window, the
 subscription is rebuilt, and the missed interval is declared as a gap.
+`make scenario-broker-outage` freezes and then kills the MQTT broker while
+the server runs on: nothing in the journal blames the source, and every
+value keeps the time it arrived as `read_at` (docs/ARCHITECTURE.md,
+"Broker outage", for what an outage does to the journal and to MQTT
+subscribers).
 
 ## Report
 
@@ -275,7 +280,7 @@ with the same mounts for a first look without MQTT.
 ## Quick start
 
 ```sh
-make scenarios                # all seven scenarios (docs/SCENARIOS.md), local processes
+make scenarios                # all eight scenarios (docs/SCENARIOS.md), local processes
 ```
 
 Your own server, step by step (endpoints, security, certificate, first
@@ -379,7 +384,7 @@ testdata/              canonicalisation vectors, report fixture
 
 ## Documentation
 
-- `docs/SCENARIOS.md`: the seven scenarios, locally and in the container stack.
+- `docs/SCENARIOS.md`: the eight scenarios, locally and in the container stack.
 - `docs/CONNECT_YOUR_SERVER.md`: from endpoint to verified journal on your server.
 - `docs/STATUS.md`: reason codes and the state of a source.
 - `docs/INTEROP.md`: runs against servers of other implementations, what worked and what did not.
