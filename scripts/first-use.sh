@@ -9,7 +9,8 @@
 #                                   GitHub, go install …@v0.1.1, the release
 #                                   archive with checksums.txt, GHCR image 0.1.1
 #
-# It needs what the README asks of a user: git, Go 1.24 or newer, Mosquitto
+# It needs what the README asks of a user: git, the Go of go.mod (1.26.11 or
+# newer; an older go with GOTOOLCHAIN=auto fetches it), Mosquitto
 # (broker and mosquitto_sub), Python 3.9 or newer, Docker with Compose v2, and
 # free ports: 18830, 48400 and 48401 (scenarios), 18831 and 48410 (your own
 # server, played by the bundled simulator), 1883, 4840, 5020 and 8080 (demo
@@ -126,15 +127,16 @@ count() { local n; n=$(grep -c -- "$1" "$2" 2>/dev/null) || true; echo "${n:-0}"
 # ---------------------------------------------------------------------------
 step "Prerequisites from the README"
 need git "it is used to get the code"
-need go "README, Install: Go 1.24 or newer"
+need go "README, Install: Go 1.26.11 or newer"
 need mosquitto "the scenarios run a local Mosquitto (docs/SCENARIOS.md)"
 need mosquitto_sub "the Quick start watches the topics with it"
 need docker "the demo stack runs on Docker Compose"
 docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 (docker compose) is missing"
-gov="$(go env GOVERSION)"
-gomin="${gov#go1.}"
-gomin="${gomin%%.*}"
-[[ $gomin =~ ^[0-9]+$ && $gomin -ge 24 ]] || fail "Go $gov is older than the documented 1.24"
+gowant="$(awk '$1 == "go" { print $2; exit }' "$here/go.mod")"
+gov="$(cd "$here" && go env GOVERSION 2>/dev/null)" ||
+	fail "go cannot build this module: go.mod requires Go $gowant (with GOTOOLCHAIN=local an older go stops here)"
+[[ "$(printf '%s\n%s\n' "$gowant" "${gov#go}" | sort -V | head -n 1)" == "$gowant" ]] ||
+	fail "Go $gov is older than $gowant, which go.mod requires"
 for port in 18830 48400 48401 $OWN_MQTT $OWN_OPC 1883 4840 5020 8080; do
 	port_in_use "$port" && fail "port $port is in use (scenarios: 18830, 48400, 48401; own server: $OWN_MQTT, $OWN_OPC; demo: 1883, 4840, 5020, 8080)"
 done

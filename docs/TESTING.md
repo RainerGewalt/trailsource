@@ -38,13 +38,16 @@ agree with the reference:
 - every reason code is in the trail-evidence catalog
   (`TestCodesAreInTheTrailEvidenceCatalog`);
 - journals of real runs are checked with the reference verifier
-  `trail-evidence verify` inside `make first-use`, when it is on `PATH`.
+  `trail-evidence verify` inside `make first-use`, which installs the
+  pinned version for the run; that step cannot be skipped.
 
 The first three read a trail-evidence checkout from `TRAIL_EVIDENCE_DIR`,
 or from a checkout next to this repository; without one they are skipped
-locally. CI checks out trail-evidence v0.2.1, the first tag whose catalog
-lists `source.subscription_stalled`, and sets the variable, so there they
-run and a missing file fails.
+locally. In CI (`CI=true`, which GitHub Actions sets in every job) and
+whenever `TRAIL_EVIDENCE_DIR` is set, a missing checkout fails them instead.
+`ci.yml` and the release workflow both check out trail-evidence v0.2.1, the
+first tag whose catalog lists `source.subscription_stalled`, and set the
+variable.
 
 **L4 Scenario.** Product behaviour against a running OPC UA server:
 `make scenarios` runs the seven scenarios of `docs/SCENARIOS.md` with the
@@ -69,7 +72,7 @@ the reference verifier.
   `checksums.txt`, and the GHCR image, each of which must report `0.1.1`;
   the demo stack then runs the published image.
 
-It needs what the README asks of a user (git, Go 1.24 or newer, Mosquitto,
+It needs what the README asks of a user (git, Go 1.26.11 or newer, Mosquitto,
 Python 3.9 or newer, Docker with Compose v2) and the free ports it lists at
 the top. It removes its processes, containers and working directory
 afterwards (`FIRST_USE_KEEP=1` keeps the directory).
@@ -117,6 +120,16 @@ Recorded controls:
   failed … cannot be skipped` (exit 1); with the default it passes. Before
   this change the step printed `skipped` and the run ended green.
 
+- `TestReferenceVectors`, `TestCodesAreInTheTrailEvidenceCatalog`
+  without a checkout and with `CI=true`: both fail with `the trail-evidence
+  checkout is required`. Control: with the `CI` condition removed from
+  `trailEvidenceDir`, `TestReferenceVectors` is skipped and the run ends
+  green, which is what the release workflow did before 0.1.2.
+- `govulncheck` step and `scripts/check_toolchain.sh`: with the `go` line of
+  `go.mod` set to 1.26.9, `govulncheck ./...` exits 3 with GO-2026-6809 and
+  GO-2026-6859, and the toolchain check fails because the Dockerfile names
+  1.26.11; with 1.26.11 both pass.
+
 ## Commands
 
 - `make test`: Go tests and the Python unit tests (L1, L2, L3 when a
@@ -128,9 +141,14 @@ Recorded controls:
 
 ## CI
 
-`.github/workflows/ci.yml` runs gofmt, build, vet and the Go tests with
-trail-evidence v0.2.1 checked out, the Python compile and unit tests, and the
-Compose configuration with the demo-init check, on every push and pull
-request. The scenarios and `make first-use` are not part of CI: they need a
+`.github/workflows/ci.yml` runs the toolchain check
+(`scripts/check_toolchain.sh`: the `go` in use and the Dockerfile's build
+stage are the version of `go.mod`), gofmt, build, vet, the Go tests with
+trail-evidence v0.2.1 checked out, `govulncheck` (fails on any reachable
+vulnerability), the Python compile and unit tests, and the Compose
+configuration with the demo-init check, on every push and pull request.
+The release workflow runs the same Go checks, L3 and `govulncheck`
+included, before GoReleaser and the image are built; GoReleaser runs the
+toolchain check again before it builds the archives. The scenarios and `make first-use` are not part of CI: they need a
 local Mosquitto, the simulator and Docker on fixed ports. They run by hand
 before and after every tag.

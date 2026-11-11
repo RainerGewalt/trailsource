@@ -31,7 +31,8 @@ along. The runner is `scripts/scenario.sh`.
 
 ## Requirements
 
-- Go 1.24 or newer, to build `bin/trailsource` (`make` does that).
+- Go 1.26.11 or newer, to build `bin/trailsource` (`make` does that; an
+  older `go` with the default `GOTOOLCHAIN=auto` downloads it).
 - `mosquitto` on `PATH`. The runner starts its own broker on
   `127.0.0.1:18830`. Without Mosquitto, start any MQTT broker on that port
   and run with `SCENARIO_BROKER=external`.

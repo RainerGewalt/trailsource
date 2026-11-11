@@ -1,6 +1,7 @@
 name: release
 
-# On a tag v*: Go tests, then the trailsource binaries with GoReleaser
+# On a tag v*: Go tests with the conformance checks (L3, never skipped) and
+# govulncheck, then the trailsource binaries with GoReleaser
 # (attached to the GitHub release with checksums.txt) and the container
 # image ghcr.io/<owner>/trailsource:<version> and :latest for linux/amd64
 # and linux/arm64 from ./Dockerfile (the Go adapter only).
@@ -20,13 +21,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Conformance (docs/TESTING.md, L3) as in ci.yml: the reference vectors
+      # and the reason-code catalog of trail-evidence v0.2.1. With CI=true
+      # (always set on GitHub Actions) the tests fail instead of skipping
+      # when the checkout is missing.
+      - uses: actions/checkout@v4
+        with:
+          repository: RainerGewalt/trail-evidence
+          ref: v0.2.1
+          path: .trail-evidence
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: toolchain pins agree
+        run: scripts/check_toolchain.sh
       - name: gofmt
         run: test -z "$(gofmt -l cmd internal)" || { gofmt -l cmd internal; exit 1; }
       - run: go vet ./...
-      - run: go test ./...
+      - name: test
+        run: go test ./...
+        env:
+          TRAIL_EVIDENCE_DIR: ${{ github.workspace }}/.trail-evidence
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   goreleaser:
     name: GoReleaser

@@ -22,7 +22,7 @@ help:
   '  make first-use       README and CONNECT_YOUR_SERVER.md from a fresh clone (docs/TESTING.md); RELEASE=x.y.z for a release' \
 	  '  make logs            follow demo logs' \
 	  '' \
-	  'Scenarios (local processes, no Docker; need Go 1.24+, mosquitto and Python 3.9+ with asyncua):' \
+	  'Scenarios (local processes, no Docker; need Go 1.26.11+, mosquitto and Python 3.9+ with asyncua):' \
 	  '  make sim-venv                    install the simulator requirements into .demo/sim-venv' \
 	  '  make scenario-inventory-change   a node appears at runtime: source.node_added with diff' \
 	  '  make scenario-gap                the server goes away and comes back: a gap with duration' \

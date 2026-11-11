@@ -7,6 +7,8 @@ project_name: trailsource
 
 before:
   hooks:
+    # The go that builds the archives must be the one go.mod names.
+    - scripts/check_toolchain.sh
     - go mod download
 
 builds:

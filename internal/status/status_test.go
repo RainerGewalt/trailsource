@@ -70,18 +70,20 @@ func TestCodesAreDocumented(t *testing.T) {
 }
 
 // Every code must be in the trail-evidence catalog. The catalog is read from
-// TRAIL_EVIDENCE_DIR (CI checks out the compatible release and sets it; a
-// missing file is then an error) or from a checkout next to this repository.
+// TRAIL_EVIDENCE_DIR (CI checks out the compatible release and sets it) or
+// from a checkout next to this repository. A missing file is an error, not
+// a skip, when the variable is set and always in CI (CI=true): a skipped
+// conformance test that ends green is no passed release gate.
 func TestCodesAreInTheTrailEvidenceCatalog(t *testing.T) {
 	dir := os.Getenv("TRAIL_EVIDENCE_DIR")
-	required := dir != ""
-	if !required {
+	required := dir != "" || os.Getenv("CI") == "true"
+	if dir == "" {
 		dir = filepath.Join("..", "..", "..", "trail-evidence")
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "schema", "reason-codes.json"))
 	if err != nil {
 		if required {
-			t.Fatalf("TRAIL_EVIDENCE_DIR is set, but: %v", err)
+			t.Fatalf("the trail-evidence catalog is required (TRAIL_EVIDENCE_DIR set, or CI=true): %v", err)
 		}
 		t.Skip("trail-evidence not checked out next to this repository; set TRAIL_EVIDENCE_DIR")
 	}

@@ -10,15 +10,18 @@ import (
 )
 
 // trailEvidenceDir is the trail-evidence checkout the conformance tests read:
-// TRAIL_EVIDENCE_DIR, or the repository next to this one. CI checks out the
-// release this adapter claims compatibility with and sets the variable; then
-// a missing file is an error, not a skip.
-func trailEvidenceDir(t *testing.T) (string, bool) {
+// TRAIL_EVIDENCE_DIR, or the repository next to this one. required reports
+// whether a missing checkout fails the test instead of skipping it: when
+// TRAIL_EVIDENCE_DIR is set, and always in CI (CI=true, which GitHub Actions
+// sets in every job), because a conformance test that skips and still ends
+// green is no passed release gate. CI and the release workflow check out the
+// release this adapter claims compatibility with and set the variable.
+func trailEvidenceDir(t *testing.T) (dir string, required bool) {
 	t.Helper()
 	if d := os.Getenv("TRAIL_EVIDENCE_DIR"); d != "" {
 		return d, true
 	}
-	return filepath.Join("..", "..", "..", "trail-evidence"), false
+	return filepath.Join("..", "..", "..", "trail-evidence"), os.Getenv("CI") == "true"
 }
 
 type referenceVector struct {
@@ -46,7 +49,7 @@ func TestReferenceVectors(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(dir, "testdata", "vectors.json"))
 	if err != nil {
 		if required {
-			t.Fatalf("TRAIL_EVIDENCE_DIR is set, but: %v", err)
+			t.Fatalf("the trail-evidence checkout is required (TRAIL_EVIDENCE_DIR set, or CI=true): %v", err)
 		}
 		t.Skip("trail-evidence not checked out next to this repository; set TRAIL_EVIDENCE_DIR")
 	}

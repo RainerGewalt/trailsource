@@ -26,7 +26,7 @@ report names both the gap and the new address-space generation.*
 
 Each answer is one command, runs locally in about half a minute against the
 bundled simulator, and needs neither Grafana nor hardware nor Docker. Go
-1.24 or newer, Mosquitto and Python 3.9 or newer for the simulator are
+1.26.11 or newer, Mosquitto and Python 3.9 or newer for the simulator are
 enough: `make sim-venv` installs `asyncua` into `.demo/sim-venv` (see
 `docs/SCENARIOS.md`).
 
@@ -212,16 +212,19 @@ Binaries for Linux, macOS and Windows (amd64, arm64) are attached to every
 `checksums.txt`. Each archive holds `trailsource`, `LICENSE`, `NOTICE`,
 this README and `docs/CONNECT_YOUR_SERVER.md`.
 
-With Go 1.24 or newer:
+With Go 1.26.11 or newer:
 
 ```sh
 go install github.com/RainerGewalt/trailsource/cmd/trailsource@latest
 ```
 
 Building from a clone (`make build`, which the scenarios run first) needs
-the same Go 1.24 or newer. An older `go` with the default
-`GOTOOLCHAIN=auto` downloads 1.24 on first use; with `GOTOOLCHAIN=local`
-it stops with an error.
+the same Go 1.26.11 or newer. The `go` line of `go.mod` names that
+toolchain, and the release archives, the container image and CI are built
+with exactly it; CI and the release workflow run `govulncheck` and fail on
+any vulnerability the code can reach. An older `go` with the default
+`GOTOOLCHAIN=auto` downloads 1.26.11 on first use; with
+`GOTOOLCHAIN=local` it stops with an error.
 
 Container image (linux/amd64, linux/arm64, runs as uid 10001, contains the
 OPC UA adapter only):

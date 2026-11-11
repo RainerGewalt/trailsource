@@ -20,9 +20,13 @@ jobs:
           repository: RainerGewalt/trail-evidence
           ref: v0.2.1
           path: .trail-evidence
+      # The go line of go.mod names the toolchain every artifact is built
+      # with; the Dockerfile's build stage must name the same one.
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: toolchain pins agree
+        run: scripts/check_toolchain.sh
       - name: gofmt
         run: test -z "$(gofmt -l cmd internal)" || { gofmt -l cmd internal; exit 1; }
       - name: build
@@ -33,6 +37,10 @@ jobs:
         run: go test ./...
         env:
           TRAIL_EVIDENCE_DIR: ${{ github.workspace }}/.trail-evidence
+      # Fails on any vulnerability that the code can reach, in the standard
+      # library of this toolchain or in a dependency.
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   python:
     runs-on: ubuntu-latest
