@@ -89,6 +89,7 @@ restarts, the state at the end, and the verification result.
 
 ```
 Verify   OK: 141 records in 1 stream(s), 0 error(s), 1 notice(s)
+         Every record in this file verifies and links to the one before it.
 
 Stream plant-a-ext-01-extruder-01-opcua
   Period    2026-11-03T17:23:39.721Z .. 2026-11-03T17:23:59.958Z (20.237s)
@@ -110,10 +111,21 @@ Stream plant-a-ext-01-extruder-01-opcua
 ```
 
 `--html` writes one self-contained file without scripts or external
-resources, readable on a phone, in light and dark. `--json` prints the same
-content for other tools. The report reads the journal and never changes it;
+resources, in light and dark; below 560 px the gap, restart and finding
+tables become stacked entries, so a phone shows duration, reason and
+finding without sideways scrolling. `--json` prints the same content for
+other tools. The report reads the journal and never changes it;
 `trailsource verify` is the command whose exit code says whether the chain
 holds.
+
+The report shows only what the hashes cover: the producer and its version,
+and the endpoint from the payload of the connection and inventory records.
+The `context` member of a record (site, line, device, host) is not hashed
+and not shown. Every report ends with what verification covers and what it
+does not. With `FAIL` the findings come right after the verdict; a journal
+without records is `EMPTY`, never `OK`, and `trailsource verify` exits 1
+for it. The report names the journal by its file name only, and says which
+trailsource version made it and when.
 
 ## Where this fits
 

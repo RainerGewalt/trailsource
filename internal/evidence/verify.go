@@ -59,14 +59,24 @@ type Report struct {
 	Issues  []Issue        `json:"issues"`
 }
 
-// OK reports whether no gap or hash break was found.
+// OK reports whether the journal holds records and no gap or hash break
+// was found. An empty journal is not OK: it proves nothing.
 func (r Report) OK() bool {
+	if r.Records == 0 {
+		return false
+	}
 	for _, i := range r.Issues {
 		if i.IsBreak() {
 			return false
 		}
 	}
 	return true
+}
+
+// Empty reports whether the journal held no records and nothing that
+// failed to parse (blank lines only, or no bytes at all).
+func (r Report) Empty() bool {
+	return r.Records == 0 && len(r.Issues) == 0
 }
 
 type parsed struct {
@@ -223,7 +233,10 @@ func verifyStream(sid string, recs []parsed, issues *[]Issue) StreamReport {
 				add(IssueChainBreak, p, seq, fmt.Sprintf("anchor_hash %s does not match the last chain_hash %s of the previous segment", anchor, prevHash))
 			} else {
 				detail := fmt.Sprintf("restart at seq %d, anchor %s", seq, anchor)
-				if first {
+				switch {
+				case first && seq == 0 && anchor == GenesisHash:
+					detail = "start of the stream: seq 0, anchor genesis"
+				case first:
 					detail += " (previous segment not in this journal)"
 				}
 				add(IssueRestart, p, seq, detail)

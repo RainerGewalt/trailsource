@@ -3,6 +3,7 @@ package report
 import (
 	"html/template"
 	"io"
+	"strings"
 )
 
 // WriteHTML renders the report as one self-contained HTML file: no scripts,
@@ -14,6 +15,8 @@ func (r *Report) WriteHTML(w io.Writer) error {
 var page = template.Must(template.New("report").Funcs(template.FuncMap{
 	"short":    ShortHash,
 	"severity": severity,
+	"join":     strings.Join,
+	"scope":    func() string { return Scope },
 	"limit": func(items []string) []string {
 		if len(items) > maxListed {
 			return items[:maxListed]
@@ -26,7 +29,16 @@ var page = template.Must(template.New("report").Funcs(template.FuncMap{
 		}
 		return 0
 	},
-}).Parse(`<!doctype html>
+}).Parse(`{{define "findings"}}
+<h2>Findings</h2>
+<section>
+{{if not .Verify.Issues}}<p class="muted">None.</p>{{else}}
+<table class="stack">
+<tr class="head"><th>Severity</th><th>Class</th><th>Line</th><th>Seq</th><th>Detail</th></tr>
+{{range .Verify.Issues}}<tr><td data-label="Severity" class="{{severity .}}">{{severity .}}</td><td data-label="Class"><code>{{.Kind}}</code></td><td data-label="Line" class="num">{{.Line}}</td><td data-label="Seq" class="num">{{.Seq}}</td><td data-label="Detail" class="mono">{{.Detail}}</td></tr>{{end}}
+</table>{{end}}
+</section>
+{{end}}<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -39,23 +51,29 @@ var page = template.Must(template.New("report").Funcs(template.FuncMap{
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 main{max-width:960px;margin:0 auto;padding:16px}
 h1{font-size:1.4rem;margin:.2rem 0 .6rem}
-h2{font-size:1.15rem;margin:1.6rem 0 .4rem;word-break:break-all}
+h2{font-size:1.15rem;margin:1.6rem 0 .4rem;overflow-wrap:anywhere}
 h3{font-size:1rem;margin:1.2rem 0 .3rem;color:var(--muted)}
 section{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:12px 0}
 code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.86em}
-code{background:var(--code);padding:1px 4px;border-radius:4px;word-break:break-all}
-.ok{color:var(--ok);font-weight:600}.fail{color:var(--bad);font-weight:600}.notice{color:var(--note)}.error{color:var(--bad)}
+code{background:var(--code);padding:1px 4px;border-radius:4px;overflow-wrap:anywhere}
+.mono{overflow-wrap:anywhere}
+.ok{color:var(--ok);font-weight:600}.fail{color:var(--bad);font-weight:600}.empty{color:var(--note);font-weight:600}.notice{color:var(--note)}.error{color:var(--bad)}
 .muted{color:var(--muted)}
+p.verdict{margin:.5rem 0 0}
 dl{display:grid;grid-template-columns:max-content 1fr;gap:2px 12px;margin:0}
-dt{color:var(--muted)}dd{margin:0;word-break:break-word}
-.scroll{overflow-x:auto}
+dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}
 table{border-collapse:collapse;width:100%;font-size:.92em}
 th,td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 th{color:var(--muted);font-weight:500;white-space:nowrap}
 td.num{text-align:right;font-variant-numeric:tabular-nums}
 ul.diff{margin:.2rem 0 .4rem;padding-left:1.2rem}
-ul.diff li{word-break:break-all}
-@media (max-width:560px){body{font-size:14px}dl{grid-template-columns:1fr}dt{margin-top:4px}}
+ul.diff li{overflow-wrap:anywhere}
+@media (max-width:560px){body{font-size:14px}main{padding:12px}section{padding:10px}dl{grid-template-columns:1fr}dt{margin-top:4px}
+table.stack,table.stack tbody{display:block}
+table.stack tr.head{display:none}
+table.stack tr{display:block;border-bottom:1px solid var(--line);padding:6px 0}
+table.stack td{display:block;border:0;padding:1px 0;text-align:left}
+table.stack td::before{content:attr(data-label);display:block;color:var(--muted);font:12px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}}
 </style>
 </head>
 <body>
@@ -64,24 +82,27 @@ ul.diff li{word-break:break-all}
 <section>
 <dl>
 <dt>Journal</dt><dd><code>{{.File}}</code></dd>
-<dt>Verify</dt><dd class="{{if .OK}}ok{{else}}fail{{end}}">{{.VerifySummary}}</dd>
+{{if or .Generator .GeneratedAt}}<dt>Report</dt><dd>trailsource {{.Generator}}{{if .GeneratedAt}}, {{.GeneratedAt}}{{end}}</dd>{{end}}
+<dt>Verify</dt><dd class="{{if .Empty}}empty{{else if .OK}}ok{{else}}fail{{end}}">{{.VerifySummary}}</dd>
 </dl>
+<p class="verdict">{{.Verdict}}</p>
 </section>
+{{if and (not .OK) (not .Empty)}}{{template "findings" .}}{{end}}
 {{range .Streams}}
 <h2>Stream <code>{{.StreamID}}</code></h2>
 <section>
 <dl>
-<dt>Producer</dt><dd>{{.Producer}}</dd>
+<dt>Producer</dt><dd>{{.Producer}}{{if .ProducerVersions}}, version {{join .ProducerVersions ", "}}{{end}}</dd>
 {{if .Endpoint}}<dt>Endpoint</dt><dd><code>{{.Endpoint}}</code></dd>{{end}}
 <dt>Period</dt><dd>{{.First}} to {{.Last}} ({{.Span}})</dd>
 <dt>At end</dt><dd><code>{{.LastEvent}}</code>, last seen {{if .LastSeen}}{{.LastSeen}}{{else}}never{{end}}</dd>
 <dt>Records</dt><dd>{{.Records}}</dd>
 {{with .Values}}{{if or .Good .Uncertain .Bad}}<dt>Values</dt><dd>{{.Nodes}} nodes; quality good {{.Good}}, uncertain {{.Uncertain}}, bad {{.Bad}}; without source timestamp {{.NoSourceTimestamp}}</dd>{{end}}{{end}}
 </dl>
-<div class="scroll"><table>
+<table>
 <tr><th>Event type</th><th>Records</th></tr>
 {{range .Events}}<tr><td><code>{{.EventType}}</code></td><td class="num">{{.Count}}</td></tr>{{end}}
-</table></div>
+</table>
 </section>
 
 <h3>Address space generations</h3>
@@ -104,31 +125,23 @@ ul.diff li{word-break:break-all}
 <h3>Gaps</h3>
 <section>
 {{if not .Gaps}}<p class="muted">None.</p>{{else}}
-<div class="scroll"><table>
-<tr><th>Kind</th><th>Begin</th><th>End</th><th>Duration</th><th>Reason</th></tr>
-{{range .Gaps}}<tr><td>{{.Kind}}</td><td class="mono">{{.Begin}}</td><td class="mono">{{if .Open}}open{{else}}{{.End}}{{end}}</td><td>{{.Duration}}</td>
-<td>{{if .ReasonCode}}<code>{{.ReasonCode}}</code> {{end}}{{.Reason}}{{if .LastDataBefore}}<br><span class="muted">last value before: {{.LastDataBefore}}</span>{{end}}</td></tr>{{end}}
-</table></div>{{end}}
+<table class="stack">
+<tr class="head"><th>Kind</th><th>Begin</th><th>End</th><th>Duration</th><th>Reason</th></tr>
+{{range .Gaps}}<tr><td data-label="Kind">{{.Kind}}</td><td data-label="Begin" class="mono">{{.Begin}}</td><td data-label="End" class="mono">{{if .Open}}open{{else}}{{.End}}{{end}}</td><td data-label="Duration">{{.Duration}}</td>
+<td data-label="Reason">{{if .ReasonCode}}<code>{{.ReasonCode}}</code> {{end}}{{.Reason}}{{if .LastDataBefore}}<br><span class="muted">last value before: {{.LastDataBefore}}</span>{{end}}</td></tr>{{end}}
+</table>{{end}}
 </section>
 
 <h3>Restarts</h3>
 <section>
-<div class="scroll"><table>
-<tr><th>Seq</th><th>Recorded</th><th>Anchor</th><th>After previous record</th></tr>
-{{range .Restarts}}<tr><td class="num">{{.Seq}}</td><td class="mono">{{.RecordedAt}}</td><td>{{if .AnchorGenesis}}genesis{{else}}<code>{{short .Anchor}}</code>{{end}}</td><td>{{.AfterPrevious}}</td></tr>{{end}}
-</table></div>
+<table class="stack">
+<tr class="head"><th>Seq</th><th>Recorded</th><th>Anchor</th><th>After previous record</th></tr>
+{{range .Restarts}}<tr><td data-label="Seq" class="num">{{.Seq}}</td><td data-label="Recorded" class="mono">{{.RecordedAt}}</td><td data-label="Anchor">{{if .AnchorGenesis}}genesis (start of the stream){{else}}<code>{{short .Anchor}}</code>{{end}}</td><td data-label="After previous record">{{.AfterPrevious}}</td></tr>{{end}}
+</table>
 </section>
 {{end}}
-
-<h2>Findings</h2>
-<section>
-{{if not .Verify.Issues}}<p class="muted">None.</p>{{else}}
-<div class="scroll"><table>
-<tr><th>Severity</th><th>Class</th><th>Line</th><th>Seq</th><th>Detail</th></tr>
-{{range .Verify.Issues}}<tr><td class="{{severity .}}">{{severity .}}</td><td><code>{{.Kind}}</code></td><td class="num">{{.Line}}</td><td class="num">{{.Seq}}</td><td class="mono">{{.Detail}}</td></tr>{{end}}
-</table></div>{{end}}
-</section>
-<p class="muted">A verified journal is internally consistent and unchanged since sealing. It says nothing about whether the values were true.</p>
+{{if or .OK .Empty}}{{template "findings" .}}{{end}}
+<p class="muted">{{scope}}</p>
 </main>
 </body>
 </html>

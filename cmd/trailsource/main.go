@@ -196,7 +196,7 @@ func verifyCmd(args []string) int {
 		if *asJSON {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			_ = enc.Encode(map[string]any{"file": f, "ok": report.OK(), "report": report})
+			_ = enc.Encode(map[string]any{"file": f, "ok": report.OK(), "empty": report.Empty(), "report": report})
 		} else {
 			printReport(f, report)
 		}
@@ -208,6 +208,10 @@ func verifyCmd(args []string) int {
 }
 
 func printReport(file string, rep evidence.Report) {
+	if rep.Empty() {
+		fmt.Printf("%s: EMPTY, 0 records: nothing to verify, an empty journal proves nothing\n", file)
+		return
+	}
 	state := "OK"
 	if !rep.OK() {
 		state = "FAIL"
@@ -260,6 +264,7 @@ func reportCmd(args []string) int {
 		fmt.Fprintf(os.Stderr, "report: %v\n", err)
 		return 1
 	}
+	rep.Generator, rep.GeneratedAt = version, evidence.FormatTime(time.Now())
 	if *htmlOut != "" {
 		f, err := os.Create(*htmlOut)
 		if err != nil {

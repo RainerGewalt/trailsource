@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"slices"
 	"sort"
 	"time"
 
@@ -20,28 +22,36 @@ import (
 
 // Report is the rendered content of one journal.
 type Report struct {
-	File    string          `json:"file"`
+	File    string          `json:"file"` // base name only: a report that is passed on does not carry a local path
 	Verify  evidence.Report `json:"verify"`
 	OK      bool            `json:"ok"`
+	Empty   bool            `json:"empty"` // no records: nothing was verified
 	Streams []Stream        `json:"streams"`
+
+	// Set by the caller: the trailsource version that rendered the report
+	// and when.
+	Generator   string `json:"generator,omitempty"`
+	GeneratedAt string `json:"generated_at,omitempty"`
 }
 
-// Stream summarises one hash chain.
+// Stream summarises one hash chain. Every field comes from hashed members
+// of the records (core or payload); the unhashed context is not used.
 type Stream struct {
-	StreamID    string       `json:"stream_id"`
-	Producer    string       `json:"producer"`
-	Endpoint    string       `json:"endpoint,omitempty"`
-	First       string       `json:"first"`
-	Last        string       `json:"last"`
-	Span        string       `json:"span"`
-	Records     int          `json:"records"`
-	LastEvent   string       `json:"last_event"` // state at the end of the journal (docs/STATUS.md)
-	LastSeen    string       `json:"last_seen,omitempty"`
-	Events      []EventCount `json:"events"`
-	Values      ValueStats   `json:"values"`
-	Generations []Generation `json:"generations"`
-	Gaps        []Gap        `json:"gaps"`
-	Restarts    []Restart    `json:"restarts"`
+	StreamID         string       `json:"stream_id"`
+	Producer         string       `json:"producer"`
+	ProducerVersions []string     `json:"producer_versions"`  // in the order they first appear
+	Endpoint         string       `json:"endpoint,omitempty"` // from the payload of connection, start and inventory records`
+	First            string       `json:"first"`
+	Last             string       `json:"last"`
+	Span             string       `json:"span"`
+	Records          int          `json:"records"`
+	LastEvent        string       `json:"last_event"` // state at the end of the journal (docs/STATUS.md)
+	LastSeen         string       `json:"last_seen,omitempty"`
+	Events           []EventCount `json:"events"`
+	Values           ValueStats   `json:"values"`
+	Generations      []Generation `json:"generations"`
+	Gaps             []Gap        `json:"gaps"`
+	Restarts         []Restart    `json:"restarts"`
 }
 
 // EventCount is the number of records of one event type.
@@ -119,7 +129,7 @@ func Build(name string, journal []byte) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &Report{File: name, Verify: ver, OK: ver.OK()}
+	r := &Report{File: filepath.Base(name), Verify: ver, OK: ver.OK(), Empty: ver.Empty()}
 	for _, sid := range order {
 		r.Streams = append(r.Streams, summarise(sid, streams[sid]))
 	}
@@ -132,7 +142,8 @@ type entry struct {
 	seq        int64
 	eventType  string
 	producer   string
-	endpoint   string
+	version    string // producer.version
+	endpoint   string // payload.endpoint, hashed through content_hash
 	recordedAt string
 	readAt     string
 	restart    bool
@@ -147,16 +158,15 @@ type wireRecord struct {
 	ChainRestart bool            `json:"chain_restart"`
 	AnchorHash   string          `json:"anchor_hash"`
 	Producer     struct {
-		ID string `json:"id"`
+		ID      string `json:"id"`
+		Version string `json:"version"`
 	} `json:"producer"`
 	Time struct {
 		RecordedAt string `json:"recorded_at"`
 		ReadAt     string `json:"read_at"`
 	} `json:"time"`
 	Payload json.RawMessage `json:"payload"`
-	Context struct {
-		Endpoint string `json:"endpoint"`
-	} `json:"context"`
+	// context is deliberately not read: it is not covered by any hash.
 }
 
 func readEntries(r io.Reader) (map[string][]entry, []string, error) {
@@ -176,7 +186,11 @@ func readEntries(r io.Reader) (map[string][]entry, []string, error) {
 			continue // verify reports unparsable lines
 		}
 		seq := seqFromRaw(w.Seq)
-		e := entry{line: line, seq: seq, eventType: w.EventType, producer: w.Producer.ID, endpoint: w.Context.Endpoint,
+		var p struct {
+			Endpoint string `json:"endpoint"`
+		}
+		_ = json.Unmarshal(w.Payload, &p)
+		e := entry{line: line, seq: seq, eventType: w.EventType, producer: w.Producer.ID, version: w.Producer.Version, endpoint: p.Endpoint,
 			recordedAt: w.Time.RecordedAt, readAt: w.Time.ReadAt, restart: w.ChainRestart, anchor: w.AnchorHash, payload: w.Payload}
 		if _, seen := streams[w.StreamID]; !seen {
 			order = append(order, w.StreamID)
@@ -245,6 +259,9 @@ func summarise(sid string, entries []entry) Stream {
 		counts[e.eventType]++
 		if s.Producer == "" {
 			s.Producer = e.producer
+		}
+		if e.version != "" && !slices.Contains(s.ProducerVersions, e.version) {
+			s.ProducerVersions = append(s.ProducerVersions, e.version)
 		}
 		if s.Endpoint == "" {
 			s.Endpoint = e.endpoint

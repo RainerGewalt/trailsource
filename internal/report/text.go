@@ -15,6 +15,9 @@ const maxListed = 20
 
 // VerifySummary renders the verification result in one line.
 func (r *Report) VerifySummary() string {
+	if r.Empty {
+		return "EMPTY: no records in this journal, nothing was verified"
+	}
 	notices, errs := 0, 0
 	for _, i := range r.Verify.Issues {
 		if i.IsBreak() {
@@ -30,15 +33,45 @@ func (r *Report) VerifySummary() string {
 	return fmt.Sprintf("%s: %d records in %d stream(s), %d error(s), %d notice(s)", state, r.Verify.Records, len(r.Verify.Streams), errs, notices)
 }
 
+// Scope is what verification covers and what it does not, in the words of
+// the README, "What it does not do". Every report ends with it.
+const Scope = "What verification covers: every record's hashes recompute and each record links to the one before it, " +
+	"so no record was edited, removed, inserted or reordered without re-sealing everything after it. " +
+	"What it does not cover: whoever controls the file can rewrite and re-seal all of it; records cut off at the end of the journal " +
+	"are not detectable without an anchor outside it; the context fields of the records (site, line, device, host) are not covered " +
+	"by any hash, so this report does not show them; and nothing in a journal shows that the values were true."
+
+// Verdict explains the verification result above the details.
+func (r *Report) Verdict() string {
+	switch {
+	case r.Empty:
+		return "The journal holds no records, so there is nothing to verify; an empty file proves nothing. " +
+			"Check journal.enabled and journal.path in the adapter's configuration."
+	case !r.OK:
+		return "FAIL means the journal is not what was sealed: the findings name every line whose hashes or links do not hold. " +
+			"One cause besides an edit is known: a chain_break at the first record after a restart can also come from an adapter " +
+			"that stopped between saving its chain position and writing that record; verification alone cannot tell the two apart."
+	default:
+		return "Every record in this file verifies and links to the one before it."
+	}
+}
+
 // WriteText renders the report as plain text.
 func (r *Report) WriteText(w io.Writer) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "TrailSource report\n")
 	fmt.Fprintf(&b, "Journal  %s\n", r.File)
+	if r.Generator != "" || r.GeneratedAt != "" {
+		fmt.Fprintf(&b, "Report   trailsource %s, %s\n", orNone(r.Generator), orNone(r.GeneratedAt))
+	}
 	fmt.Fprintf(&b, "Verify   %s\n", r.VerifySummary())
+	wrap(&b, "         ", r.Verdict())
+	if !r.OK && !r.Empty {
+		writeFindingsText(&b, r.Verify.Issues)
+	}
 	for _, s := range r.Streams {
 		fmt.Fprintf(&b, "\nStream %s\n", s.StreamID)
-		fmt.Fprintf(&b, "  Producer  %s\n", s.Producer)
+		fmt.Fprintf(&b, "  Producer  %s, version %s\n", s.Producer, strings.Join(s.ProducerVersions, ", "))
 		if s.Endpoint != "" {
 			fmt.Fprintf(&b, "  Endpoint  %s\n", s.Endpoint)
 		}
@@ -105,16 +138,42 @@ func (r *Report) WriteText(w io.Writer) error {
 		}
 	}
 
-	fmt.Fprintf(&b, "\nFindings (%d)\n", len(r.Verify.Issues))
-	for i, is := range r.Verify.Issues {
-		if i == 2*maxListed {
-			fmt.Fprintf(&b, "  ... %d more (use --json)\n", len(r.Verify.Issues)-i)
-			break
-		}
-		fmt.Fprintf(&b, "  %-6s %-14s line %-6d seq %-6d %s\n", severity(is), is.Kind, is.Line, is.Seq, is.Detail)
+	if r.OK || r.Empty {
+		writeFindingsText(&b, r.Verify.Issues)
 	}
+	b.WriteString("\n")
+	wrap(&b, "", Scope)
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+func writeFindingsText(b *strings.Builder, issues []evidence.Issue) {
+	fmt.Fprintf(b, "\nFindings (%d)\n", len(issues))
+	for i, is := range issues {
+		if i == 2*maxListed {
+			fmt.Fprintf(b, "  ... %d more (use --json)\n", len(issues)-i)
+			break
+		}
+		fmt.Fprintf(b, "  %-6s %-14s line %-6d seq %-6d %s\n", severity(is), is.Kind, is.Line, is.Seq, is.Detail)
+	}
+}
+
+// wrap writes text in lines of at most 78 characters, each with prefix.
+func wrap(b *strings.Builder, prefix, text string) {
+	line := prefix
+	for _, word := range strings.Fields(text) {
+		if len(line) > len(prefix) && len(line)+1+len(word) > 78 {
+			b.WriteString(line + "\n")
+			line = prefix
+		}
+		if len(line) > len(prefix) {
+			line += " "
+		}
+		line += word
+	}
+	if len(line) > len(prefix) {
+		b.WriteString(line + "\n")
+	}
 }
 
 func orNone(s string) string {

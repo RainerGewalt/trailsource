@@ -113,3 +113,15 @@ func TestMappingOutDoesNotOverwrite(t *testing.T) {
 		t.Fatalf("with --force: exit %d, stderr:\n%s", code, stderr)
 	}
 }
+
+// verify does not pass an empty journal.
+func TestVerifyRefusesAnEmptyJournal(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "empty.jsonl"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, code := runCLI(t, dir, "verify", "empty.jsonl")
+	if code != 1 || !strings.Contains(stdout, "EMPTY") || strings.Contains(stdout, ": OK") {
+		t.Fatalf("exit %d, stdout:\n%s", code, stdout)
+	}
+}

@@ -242,3 +242,17 @@ func TestVerifyRejectsNonCanonicalSeq(t *testing.T) {
 		t.Fatalf("leading zero accepted: %+v", rep.Issues)
 	}
 }
+
+// A journal without records proves nothing: it is not OK. One with only
+// unparsable lines was already a failure.
+func TestEmptyJournalIsNotOK(t *testing.T) {
+	for _, in := range []string{"", "\n", "  \n\n"} {
+		rep, err := VerifyJournal(strings.NewReader(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rep.OK() || !rep.Empty() {
+			t.Fatalf("%q: ok=%v empty=%v", in, rep.OK(), rep.Empty())
+		}
+	}
+}
