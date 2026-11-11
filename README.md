@@ -295,7 +295,7 @@ make demo-down
 ```
 trailsource run --config <file>                  run the OPC UA adapter
 trailsource endpoints <opc.tcp://...>            security policies, modes, token types, server certificate
-trailsource browse --config <file>               one read-only browse, optional --mapping-out
+trailsource browse --config <file>               one read-only browse, optional --mapping-out [--force]
 trailsource gen-cert --uri <urn>                 client certificate for Sign and SignAndEncrypt
 trailsource verify [--json] <journal>...         verify journals
 trailsource report <journal> [--html <file>]     readable report, text, HTML or --json
@@ -322,6 +322,15 @@ example), `${VAR}` placeholders for secrets, and a mapping file for
 semantic roles, units and scaling (`configs/mapping/extruder.yaml`).
 `trailsource config-version` prints the hash that every record of that
 adapter carries.
+
+A placeholder is replaced inside the parsed value, so a secret with quotes,
+backslashes or `#` arrives as it is; every unset variable is named when the
+command starts, also when the file does not load. `security_policy`,
+`security_mode` and `auth` are compared exactly with the names OPC UA uses
+(`SignAndEncrypt`, not `signandencrypt`): any other value, a secured mode
+with policy `None`, a policy other than `None` with mode `None`, or an
+`mqtt.qos` outside 0 to 2 stops the command before it connects, with the
+accepted values in the message.
 
 ## Preview adapters
 

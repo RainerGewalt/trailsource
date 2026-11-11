@@ -310,7 +310,12 @@ func dial(ctx context.Context, cfg *config.Config) (*opcua.Client, sessionInfo, 
 	src := cfg.Source
 	info := sessionInfo{Auth: src.Auth, SecurityPolicy: src.SecurityPolicy, SecurityMode: src.SecurityMode}
 	policyURI := ua.SecurityPolicyURIPrefix + src.SecurityPolicy
-	mode := messageSecurityMode(src.SecurityMode)
+	mode, known := messageSecurityMode(src.SecurityMode)
+	if !known {
+		// config.Load refuses this already; never fall back to an
+		// unsecured session for a value it does not know.
+		return nil, info, fmt.Errorf("security_mode %q is not None, Sign or SignAndEncrypt, refusing to connect", src.SecurityMode)
+	}
 
 	// The stack does not reconnect on its own: every loss ends the session,
 	// is recorded, and the next session browses and subscribes from scratch.
@@ -385,14 +390,18 @@ func dial(ctx context.Context, cfg *config.Config) (*opcua.Client, sessionInfo, 
 	return client, info, nil
 }
 
-func messageSecurityMode(s string) ua.MessageSecurityMode {
+// messageSecurityMode maps the configured mode, spelt exactly; known is
+// false for any other value.
+func messageSecurityMode(s string) (mode ua.MessageSecurityMode, known bool) {
 	switch s {
+	case "None":
+		return ua.MessageSecurityModeNone, true
 	case "Sign":
-		return ua.MessageSecurityModeSign
+		return ua.MessageSecurityModeSign, true
 	case "SignAndEncrypt":
-		return ua.MessageSecurityModeSignAndEncrypt
+		return ua.MessageSecurityModeSignAndEncrypt, true
 	default:
-		return ua.MessageSecurityModeNone
+		return ua.MessageSecurityModeInvalid, false
 	}
 }
 

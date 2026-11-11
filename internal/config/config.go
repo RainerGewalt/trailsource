@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -105,29 +106,73 @@ type Config struct {
 
 var envPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 
-// ExpandEnv replaces ${NAME} with the environment value. Unset variables
-// expand to the empty string; the names are returned so callers can warn.
+// ExpandEnv replaces ${NAME} with the environment value in a text. Unset
+// variables expand to the empty string; their names are returned, each
+// once, so callers can warn. Load does not expand the text of a
+// configuration file this way: it replaces placeholders inside the parsed
+// YAML values (expandNode), so a value with quotes, backslashes or comment
+// characters cannot change the document.
 func ExpandEnv(text string) (string, []string) {
 	var missing []string
 	out := envPattern.ReplaceAllStringFunc(text, func(m string) string {
-		name := m[2 : len(m)-1]
-		v, ok := os.LookupEnv(name)
-		if !ok {
-			missing = append(missing, name)
-		}
-		return v
+		return lookupEnv(m[2:len(m)-1], &missing)
 	})
 	return out, missing
 }
 
-// Load reads, expands, validates the file and computes Version.
+// lookupEnv returns the value of name and records it in missing, once,
+// when it is not set.
+func lookupEnv(name string, missing *[]string) string {
+	v, ok := os.LookupEnv(name)
+	if !ok && !slices.Contains(*missing, name) {
+		*missing = append(*missing, name)
+	}
+	return v
+}
+
+// expandNode replaces ${NAME} placeholders in every scalar of a parsed YAML
+// document with the variable's value as it is. A plain (unquoted) scalar is
+// then typed again from its new value, as if the value had been written
+// there (rebrowse_interval_s: ${N} is a number), except that a non-empty
+// value that would read as null stays a string; a quoted scalar stays a
+// string and an explicitly tagged one keeps its tag.
+func expandNode(n *yaml.Node, missing *[]string) {
+	if n == nil {
+		return
+	}
+	if n.Kind == yaml.ScalarNode && envPattern.MatchString(n.Value) {
+		n.Value = envPattern.ReplaceAllStringFunc(n.Value, func(m string) string {
+			return lookupEnv(m[2:len(m)-1], missing)
+		})
+		const explicit = yaml.TaggedStyle | yaml.DoubleQuotedStyle | yaml.SingleQuotedStyle | yaml.LiteralStyle | yaml.FoldedStyle
+		if n.Style&explicit == 0 {
+			n.Tag = ""
+			if n.Value != "" && n.ShortTag() == "!!null" {
+				n.Tag = "!!str"
+			}
+		}
+	}
+	for _, c := range n.Content {
+		expandNode(c, missing)
+	}
+}
+
+// Load reads the file, replaces ${NAME} placeholders in its values with
+// environment variables, validates it and computes Version. The names of
+// unset variables are returned even when loading fails.
 func Load(path string) (*Config, []string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, nil, err
 	}
-	text, missing := ExpandEnv(string(raw))
-	cfg, err := Parse([]byte(text))
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		_, missing := ExpandEnv(string(raw))
+		return nil, missing, fmt.Errorf("%s: parse yaml: %w", path, err)
+	}
+	var missing []string
+	expandNode(&doc, &missing)
+	cfg, err := parseNode(&doc)
 	if err != nil {
 		return nil, missing, fmt.Errorf("%s: %w", path, err)
 	}
@@ -160,18 +205,34 @@ func ReadSecretFile(path string) (string, error) {
 	return strings.TrimRight(string(raw), "\r\n"), nil
 }
 
-// Parse parses YAML bytes (already env-expanded), applies defaults, validates
+// Parse parses YAML bytes without placeholders, applies defaults, validates
 // and computes Version.
 func Parse(text []byte) (*Config, error) {
-	var cfg Config
-	if err := yaml.Unmarshal(text, &cfg); err != nil {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(text, &doc); err != nil {
 		return nil, fmt.Errorf("parse yaml: %w", err)
+	}
+	return parseNode(&doc)
+}
+
+// parseNode decodes a parsed document, applies defaults, validates and
+// computes Version over the same document.
+func parseNode(doc *yaml.Node) (*Config, error) {
+	var cfg Config
+	var generic any
+	if doc.Kind != 0 { // an empty file is an empty configuration
+		if err := doc.Decode(&cfg); err != nil {
+			return nil, fmt.Errorf("parse yaml: %w", err)
+		}
+		if err := doc.Decode(&generic); err != nil {
+			return nil, fmt.Errorf("parse yaml for hashing: %w", err)
+		}
 	}
 	cfg.applyDefaults()
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
-	version, err := VersionOf(text, DefaultSecretKeys)
+	version, err := versionOfGeneric(generic, DefaultSecretKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -186,6 +247,10 @@ func VersionOf(text []byte, secretKeys map[string]bool) (string, error) {
 	if err := yaml.Unmarshal(text, &generic); err != nil {
 		return "", fmt.Errorf("parse yaml for hashing: %w", err)
 	}
+	return versionOfGeneric(generic, secretKeys)
+}
+
+func versionOfGeneric(generic any, secretKeys map[string]bool) (string, error) {
 	masked := Mask(normalize(generic), secretKeys)
 	return evidence.Hash(masked)
 }
@@ -319,9 +384,6 @@ func (c *Config) applyDefaults() {
 	if c.MQTT.ClientID == "" {
 		c.MQTT.ClientID = c.Producer.ID
 	}
-	if c.MQTT.QoS < 0 || c.MQTT.QoS > 2 {
-		c.MQTT.QoS = 1
-	}
 	if c.MQTT.TopicPrefix == "" {
 		c.MQTT.TopicPrefix = "trailsource/" + tok(c.Site) + "/" + tok(c.Line) + "/" + tok(c.Device)
 	}
@@ -355,12 +417,54 @@ func (c *Config) validate() error {
 			errs = append(errs, errors.New("source.auth=username requires source.username"))
 		}
 	default:
-		errs = append(errs, fmt.Errorf("source.auth must be anonymous or username, got %q", c.Source.Auth))
+		errs = append(errs, unknownValue("source.auth", c.Source.Auth, Logins))
+	}
+	// Security settings are compared exactly: an unknown value must never
+	// fall back to an unsecured session.
+	policyOK, modeOK := slices.Contains(SecurityPolicies, c.Source.SecurityPolicy), slices.Contains(SecurityModes, c.Source.SecurityMode)
+	if !policyOK {
+		errs = append(errs, unknownValue("source.security_policy", c.Source.SecurityPolicy, SecurityPolicies))
+	}
+	if !modeOK {
+		errs = append(errs, unknownValue("source.security_mode", c.Source.SecurityMode, SecurityModes))
+	}
+	if policyOK && modeOK {
+		switch {
+		case c.Source.SecurityPolicy == "None" && c.Source.SecurityMode != "None":
+			errs = append(errs, fmt.Errorf("source.security_mode %s needs a security_policy other than None", c.Source.SecurityMode))
+		case c.Source.SecurityPolicy != "None" && c.Source.SecurityMode == "None":
+			errs = append(errs, fmt.Errorf("source.security_policy %s needs security_mode Sign or SignAndEncrypt; with None the channel is not secured", c.Source.SecurityPolicy))
+		}
+	}
+	if c.MQTT.QoS < 0 || c.MQTT.QoS > 2 {
+		errs = append(errs, fmt.Errorf("mqtt.qos must be 0, 1 or 2, got %d", c.MQTT.QoS))
 	}
 	if strings.ContainsAny(c.MQTT.TopicPrefix, "+#") {
 		errs = append(errs, errors.New("mqtt.topic_prefix must not contain wildcards"))
 	}
 	return errors.Join(errs...)
+}
+
+// The values the adapter accepts, spelt as OPC UA names them.
+var (
+	SecurityPolicies = []string{"None", "Basic128Rsa15", "Basic256", "Basic256Sha256", "Aes128_Sha256_RsaOaep", "Aes256_Sha256_RsaPss"}
+	SecurityModes    = []string{"None", "Sign", "SignAndEncrypt"}
+	Logins           = []string{"anonymous", "username"}
+)
+
+// unknownValue names the setting, the value and the accepted values, and
+// suggests the accepted value that differs only in case, "_", "-" or
+// spaces.
+func unknownValue(setting, got string, allowed []string) error {
+	fold := func(s string) string {
+		return strings.ToLower(strings.NewReplacer("_", "", "-", "", " ", "").Replace(s))
+	}
+	for _, a := range allowed {
+		if fold(a) == fold(got) {
+			return fmt.Errorf("%s %q is not supported; did you mean %q? (one of %s)", setting, got, a, strings.Join(allowed, ", "))
+		}
+	}
+	return fmt.Errorf("%s %q is not supported; use one of %s", setting, got, strings.Join(allowed, ", "))
 }
 
 func tok(s string) string {

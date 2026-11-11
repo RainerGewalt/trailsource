@@ -60,9 +60,11 @@ Usage:
   trailsource verify [--json] <file>...               verify JSON Lines journals
   trailsource report <file> [--html out.html] [--json]
                                                       render a journal as a readable report
-  trailsource endpoints <opc.tcp://host:port/path>    list the server's endpoints and security modes
-  trailsource browse --config <file> [--json] [--mapping-out <file>]
-                                                      browse once (read-only, no MQTT, no journal)
+  trailsource endpoints [--json] [--timeout <d>] <opc.tcp://host:port/path>
+                                                      list the server's endpoints and security modes
+  trailsource browse --config <file> [--json] [--mapping-out <file> [--force]]
+                                                      browse once (read-only, no MQTT, no journal);
+                                                      --force replaces an existing mapping file
   trailsource gen-cert --uri <urn> [--host <name>]... [--pki <dir>]
                                                       create a client certificate for Sign/SignAndEncrypt
   trailsource config-version --config <f>             print config_version of a config file
@@ -96,6 +98,7 @@ func main() {
 	case "-h", "--help", "help":
 		usage()
 	default:
+		fmt.Fprintf(os.Stderr, "trailsource: unknown command %q\n\n", os.Args[1])
 		usage()
 		os.Exit(2)
 	}
@@ -111,13 +114,9 @@ func runCmd(args []string) int {
 		fmt.Fprintln(os.Stderr, "run: --config is required")
 		return 2
 	}
-	cfg, missing, err := config.Load(*path)
+	cfg, err := loadConfig(*path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		return 1
-	}
-	for _, m := range missing {
-		log.Printf("config: environment variable %s is not set, expanded to empty string", m)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -138,13 +137,26 @@ func configVersionCmd(args []string) int {
 		fmt.Fprintln(os.Stderr, "config-version: --config is required")
 		return 2
 	}
-	cfg, _, err := config.Load(*path)
+	cfg, err := loadConfig(*path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		return 1
 	}
 	fmt.Println(cfg.Version)
 	return 0
+}
+
+// loadConfig loads a configuration and reports unset environment variables
+// first, also when loading fails: an empty value is often the cause.
+func loadConfig(path string) (*config.Config, error) {
+	cfg, missing, err := config.Load(path)
+	for _, m := range missing {
+		log.Printf("config: environment variable %s is not set, expanded to empty string", m)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		return nil, err
+	}
+	return cfg, nil
 }
 
 func verifyCmd(args []string) int {
@@ -325,6 +337,7 @@ func browseCmd(args []string) int {
 	path := fs.String("config", "", "path to the YAML configuration (source section is used)")
 	asJSON := fs.Bool("json", false, "print the inspection as JSON")
 	mappingOut := fs.String("mapping-out", "", "write a mapping skeleton for the browsed nodes to this file")
+	force := fs.Bool("force", false, "with --mapping-out: replace an existing file")
 	if _, err := parseInterleaved(fs, args); err != nil {
 		return 2
 	}
@@ -332,13 +345,17 @@ func browseCmd(args []string) int {
 		fmt.Fprintln(os.Stderr, "browse: --config is required")
 		return 2
 	}
-	cfg, missing, err := config.Load(*path)
+	cfg, err := loadConfig(*path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		return 1
 	}
-	for _, m := range missing {
-		log.Printf("config: environment variable %s is not set, expanded to empty string", m)
+	// A mapping file may hold hand-written roles, units and scaling: it is
+	// replaced only on request, and that is checked before the browse.
+	if *mappingOut != "" && !*force {
+		if _, err := os.Stat(*mappingOut); err == nil {
+			fmt.Fprintf(os.Stderr, "browse: %s exists; it is not replaced (use --force to replace it, or choose another file)\n", *mappingOut)
+			return 1
+		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -350,7 +367,7 @@ func browseCmd(args []string) int {
 	if *mappingOut != "" {
 		raw, err := mapping.Skeleton(ins.Items, cfg.Source.Endpoint, evidence.FormatTime(time.Now()))
 		if err == nil {
-			err = os.WriteFile(*mappingOut, raw, 0o644)
+			err = writeMapping(*mappingOut, raw, *force)
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "browse: mapping skeleton: %v\n", err)
@@ -441,6 +458,24 @@ func genCertCmd(args []string) int {
 	fmt.Printf("trust list   %s/trusted/certs (empty: no server is trusted yet)\n", *pki)
 	fmt.Println("Trust this client certificate on the server. With source.pki_dir set to this directory the adapter uses it by default.")
 	return 0
+}
+
+// writeMapping writes a mapping skeleton; without force it refuses to
+// replace a file that appeared since the check before the browse.
+func writeMapping(path string, raw []byte, force bool) error {
+	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	if force {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	}
+	f, err := os.OpenFile(path, flags, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(raw); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 type multiFlag []string

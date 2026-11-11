@@ -1,6 +1,7 @@
 # TrailSource OPC UA adapter configuration (example for the demo stack).
-# Dollar-brace placeholders (NAME inside the braces) are expanded from the
-# environment at start-up. Secret keys (password, username, token, ...) are
+# Dollar-brace placeholders (NAME inside the braces) are replaced from the
+# environment at start-up, inside the parsed values: quotes or backslashes
+# in a secret do not change the file. Secret keys (password, username, token, ...) are
 # masked before config_version is computed, so rotating a secret does not
 # change the hash.
 revision: "1"

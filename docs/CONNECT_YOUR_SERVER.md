@@ -50,6 +50,11 @@ deprecated `Basic128Rsa15` and `Basic256` have not been exercised.
 `Sign` and `SignAndEncrypt` need a client certificate and a trust list
 for the server's certificate (step 3).
 
+Write the names exactly as above. A value TrailSource does not know, such
+as `signandencrypt` or `basic256sha256`, a secured mode with policy
+`None`, or a policy with mode `None`, stops `browse` and `run` before any
+connection, and the message names the accepted values.
+
 ## 3. Certificates in both directions
 
 `Sign` and `SignAndEncrypt` need two decisions: the server has to trust
@@ -276,6 +281,10 @@ fingerprint").
 mkdir -p configs/mapping
 ./bin/trailsource browse --config my-server.yaml --mapping-out configs/mapping/my-server.yaml
 ```
+
+An existing file is not replaced: once you have edited the mapping,
+`browse --mapping-out` stops with a message instead of overwriting it.
+Add `--force` to replace it on purpose.
 
 The skeleton has one rule per node, with the exact browse path and a
 derived role (`MeltPressure` becomes `melt_pressure`), and the data type,
