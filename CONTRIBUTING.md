@@ -36,6 +36,16 @@ stdlib-only inside `adapters/pylib/trailsource_evidence`.
 - Do not add domain-specific company, site or customer names to simulators,
   configs or docs. The demo domain is a generic extrusion line.
 
+## Releases
+
+- A tag is an annotated tag on the release commit of `main`, made after a
+  passing `make first-use` (`docs/TESTING.md`). The tagger is the same Git
+  identity as the maintainer's commits; check `git var GIT_COMMITTER_IDENT`
+  before `git tag -a`. Published tags are never moved or rewritten; a
+  mistake is corrected by the next patch release.
+- The release workflow builds with the Go version of `go.mod` and stops on
+  a skipped conformance test or a reachable vulnerability.
+
 ## Licence
 
 By contributing you agree that your contributions are licensed under the

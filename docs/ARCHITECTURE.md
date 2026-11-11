@@ -145,6 +145,32 @@ connection of the OPC UA source (`make scenario-broker-outage`, docs/SCENARIOS.m
   broker. No record is sealed before; the journal file may already exist,
   empty.
 
+## Journal size and rotation
+
+One journal file per source; TrailSource appends to it and never rotates
+it. A value record is about 2.3 KB (2,336 bytes on average over 715 value
+records of the broker-outage scenario on 11 November; an inventory record
+with 28 nodes about 21 KB). A source with one value change per second
+writes about 200 MB a day, the simulator with about ten changes per
+second about 2 GB (computed, not measured over a day). `verify` and
+`report` read the whole file into memory.
+
+To rotate by hand:
+
+1. Stop the adapter (SIGTERM). Its last record is
+   `source.connection_closed`.
+2. Move the journal file, for example to `journal/<source-id>.2026-11.jsonl`.
+   Leave `state_dir` as it is: the chain position lives there.
+3. Start the adapter. The new file begins with `source.bridge.restarted`
+   (`common.restart`), anchored at the last `chain_hash` of the moved file.
+
+Verified on its own, the new file reports that restart as a notice whose
+previous segment is not in this journal; the files concatenated in order
+(`cat old.jsonl new.jsonl | trailsource verify -`) verify as one chain
+(run of 11 November against the simulator). Deleting the chain state
+instead starts a new chain at genesis, recorded as `common.state_lost`
+while the inventory snapshot or a journal file is still there.
+
 ## State files
 
 ```

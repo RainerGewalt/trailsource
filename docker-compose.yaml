@@ -90,7 +90,7 @@ services:
     <<: *common
     build:
       context: .
-      args: { VERSION: "${TRAILSOURCE_VERSION:-0.1.0-dev}" }
+      args: { VERSION: "${TRAILSOURCE_VERSION:-dev}" }
     container_name: trailsource_opcua_adapter
     depends_on:
       demo-init: { condition: service_completed_successfully }
@@ -115,7 +115,7 @@ services:
       <<: *adapter-env
       ADAPTER: modbus
       TRAILSOURCE_CONFIG: /config/modbus-energy-meter.yaml
-      TRAILSOURCE_VERSION: "${TRAILSOURCE_VERSION:-0.1.0-dev}"
+      TRAILSOURCE_VERSION: "${TRAILSOURCE_VERSION:-dev}"
     volumes:
       - ./configs:/config:ro
       - ./.demo/state:/state
@@ -133,7 +133,7 @@ services:
       <<: *adapter-env
       ADAPTER: ethernetip
       TRAILSOURCE_CONFIG: /config/ethernetip-robot-cell.yaml
-      TRAILSOURCE_VERSION: "${TRAILSOURCE_VERSION:-0.1.0-dev}"
+      TRAILSOURCE_VERSION: "${TRAILSOURCE_VERSION:-dev}"
     volumes:
       - ./configs:/config:ro
       - ./.demo/state:/state

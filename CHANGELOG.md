@@ -5,6 +5,69 @@ Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+A correction release: no new features. It addresses the quality audit of
+8 November 2026.
+
+### Security
+
+- Binaries, the container image and CI are built with Go 1.26.11 (the `go`
+  line of `go.mod`), `golang.org/x/net` v0.62.0, and the image runs on
+  Alpine 3.24. 0.1.1 was built with Go 1.24, which no longer receives
+  security fixes; `govulncheck` reported 42 reachable vulnerabilities of
+  its standard library, among them in `crypto/x509`, which the trust-list
+  check uses. `govulncheck` now runs in CI and in the release workflow and
+  fails on any reachable vulnerability; `scripts/check_toolchain.sh` keeps
+  `go.mod`, the Dockerfile and the toolchain in use at the same version.
+- `security_policy`, `security_mode` and `auth` are compared exactly with
+  the OPC UA names. 0.1.1 accepted an unknown `security_mode` (for example
+  `signandencrypt`), connected without message security and recorded the
+  configured string as the session's mode. Unknown values, a secured mode
+  with policy `None` and a policy with mode `None` now stop the
+  configuration before any connection, with the accepted values in the
+  message.
+
+### Fixed
+
+- A broker that stops answering or goes away is no longer recorded as a
+  `source.subscription_stalled` and `common.gap` of the OPC UA source, and
+  the publish responses that wait meanwhile are no longer dropped. Values
+  keep the time they reached the adapter as `read_at`. New scenario
+  `make scenario-broker-outage`; what an outage does to the journal and to
+  MQTT subscribers is in `docs/ARCHITECTURE.md`, "Broker outage".
+- The report no longer ends with "unchanged since sealing": every report
+  states what verification covers and what it does not. It shows the
+  endpoint from the hashed records instead of the unhashed `context`, the
+  producer version, the trailsource version and time that made it, and
+  the journal's file name instead of its path. With `FAIL` the findings
+  come first. Below 560 px its tables become stacked entries.
+- A journal without records is `EMPTY`, not `OK`: `trailsource verify`
+  exits 1 for it, and the report shows its own state.
+- The first record of a new stream is reported as the start of the
+  stream, not as a restart after a segment missing from the journal.
+- `${VAR}` placeholders are replaced inside the parsed values: a secret
+  with quotes, backslashes, `#` or a line break arrives unchanged.
+  `config_version` of existing configurations is unchanged.
+- Unset variables are named also when a configuration does not load.
+- `mqtt.qos` outside 0 to 2 is an error instead of a silent 1.
+- `trailsource` names an unknown command; the help lists the flags of
+  `endpoints`; `browse --mapping-out` does not replace an existing file
+  without `--force`; the MQTT connect timeout names the broker.
+- The release workflow runs the trail-evidence conformance tests (L3);
+  in CI they fail instead of skipping when the checkout is missing.
+
+### Documentation
+
+- README starts with the product question, describes what TrailSource
+  records without statements about other tools, gives the measured browse
+  size instead of "a few thousand nodes take seconds", lists the known
+  limits of 0.1, and uses a placeholder host in the Docker example.
+- `docs/ARCHITECTURE.md`: broker outage, journal size (about 2.3 KB per
+  value record) and how to rotate a journal by hand.
+- Versions agree: trail-evidence v0.2.1 everywhere, Python 3.9 or newer in
+  the release text, Go 1.26.11, and `dev` for builds without a version.
+- `docs/TESTING.md`: L3 in the release workflow, the new negative
+  controls; `CONTRIBUTING.md`: how releases are tagged.
+
 ## 0.1.1 - 2026-11-07
 
 ### Fixed

@@ -5,11 +5,12 @@
 
 <h1 align="center">TrailSource</h1>
 
-A read-only OPC UA source adapter that publishes every observation as a
-sealed Trail Evidence Record over MQTT and keeps a local, verifiable
-journal. Written for integrators who need to know, months later, which
-address space a value belonged to, what changed on the server, and where
-data is missing and why.
+What changed in my OPC UA data source? TrailSource is a read-only OPC UA
+adapter for integrators who need to know, months later, which address
+space a value belonged to, what changed on the server, and where data is
+missing and why. It seals every observation as a Trail Evidence Record
+into a local journal that `trailsource verify` checks offline, and
+publishes the records over MQTT.
 
 Status: v0.1, OPC UA only, read-only. The Modbus TCP and EtherNet/IP
 adapters in this repository are a preview and not part of the 0.1 gate
@@ -134,13 +135,13 @@ trailsource version made it and when.
 
 ## Where this fits
 
-TrailSource runs next to Node-RED, Telegraf or HiveMQ Edge, not instead of
-them: those tools move far more protocols into MQTT and into databases.
-TrailSource adds what they do not record: which address space, session and
-configuration a value was observed under, address-space changes and
-connection gaps as events of their own, and a hash chain that shows later
-edits. If that provenance is not needed, one of those tools alone is the
-better choice.
+TrailSource is not a protocol gateway: it reads OPC UA and nothing else,
+and it does not move data into databases. What it records with every
+value is the address space, session and configuration the value was
+observed under; address-space changes and connection gaps are records of
+their own; and a hash chain shows later edits. Because it only reads, it
+can run next to a gateway you already use, against the same server. If
+that provenance is not needed, TrailSource adds nothing.
 
 ## Using it with TrailMQ
 
@@ -165,8 +166,9 @@ stays with `trailsource verify` and the trail-evidence verifiers.
   paths, NodeIds, node classes and data types of every Variable node, so a
   reorder or a renumbered namespace is no change and a rename or move is.
   Each variable's `entity_key` survives reorders and restarts. The browse
-  is batched per group of siblings, so a few thousand nodes take seconds,
-  not minutes.
+  is batched per group of siblings; against a public demo server over the
+  internet it visited 3,213 nodes in 38 s (`docs/INTEROP.md`). Servers
+  with thousands of monitored items have not been tested.
 - Persists that snapshot and diffs it on every connect and re-browse, and
   when the server deletes a monitored node. A different fingerprint
   produces one `source.inventory.changed` record with the added, removed
@@ -222,12 +224,28 @@ trail-evidence-py verify journal/<source-id>.jsonl
   without an anchor outside it.
 - It is not a broker, historian, dashboard or rules engine.
 
+Known limits of 0.1:
+
+- The journal is written in the same loop as the MQTT publish. During a
+  broker outage it falls behind the source and catches up afterwards;
+  after roughly 17 minutes of outage (computed, not measured) the OPC UA
+  server starts to drop values that no record mentions (`docs/ARCHITECTURE.md`, "Broker
+  outage").
+- An adapter that stops between saving its chain position and writing
+  the record leaves a `chain_break` at its next start that verification
+  cannot tell apart from an edit.
+- One journal file per source, about 2.3 KB per value record, no built-in
+  rotation; `verify` and `report` read the whole file into memory. How to
+  rotate by hand: `docs/ARCHITECTURE.md`, "Journal size and rotation".
+
 ## Install
 
 Binaries for Linux, macOS and Windows (amd64, arm64) are attached to every
 [release](https://github.com/RainerGewalt/trailsource/releases), with
 `checksums.txt`. Each archive holds `trailsource`, `LICENSE`, `NOTICE`,
-this README and `docs/CONNECT_YOUR_SERVER.md`.
+this README and `docs/CONNECT_YOUR_SERVER.md`: enough for a server of your
+own. The scenarios and the simulator behind the three questions above
+need a clone of the repository.
 
 With Go 1.26.11 or newer:
 
@@ -248,8 +266,11 @@ OPC UA adapter only):
 
 ```sh
 docker pull ghcr.io/rainergewalt/trailsource:0.1.1
-docker run --rm ghcr.io/rainergewalt/trailsource:0.1.1 endpoints opc.tcp://192.0.2.10:4840
+docker run --rm ghcr.io/rainergewalt/trailsource:0.1.1 endpoints opc.tcp://<your-server>:4840
 ```
+
+Replace `<your-server>` with the host of your OPC UA server; the container
+needs a network route to it.
 
 Against a server of your own: write the configuration as described in
 `docs/CONNECT_YOUR_SERVER.md` with container paths (`pki_dir: /pki`,
@@ -291,7 +312,7 @@ with a configuration that uses local paths (`state_dir: state`,
 
 ```sh
 make build
-./bin/trailsource endpoints opc.tcp://192.0.2.10:4840
+./bin/trailsource endpoints opc.tcp://<your-server>:4840
 ./bin/trailsource browse --config my-server.yaml --mapping-out configs/mapping/my-server.yaml
 ./bin/trailsource run --config my-server.yaml            # with mapping_file: configs/mapping/my-server.yaml
 ./bin/trailsource verify journal/*.jsonl

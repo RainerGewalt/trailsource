@@ -157,15 +157,15 @@ latest `chain_hash` somewhere else matters. TrailSource v0.1 does neither,
 and says so.
 
 Both tampered journals produce the same findings with the
-[trail-evidence](https://github.com/RainerGewalt/trail-evidence) v0.2.0
+[trail-evidence](https://github.com/RainerGewalt/trail-evidence) v0.2.1
 reference verifier. Its Go binary is `trail-evidence`, its Python package
 installs `trail-evidence-py`:
 
 ```sh
-go install github.com/RainerGewalt/trail-evidence/go/cmd/trail-evidence@v0.2.0
+go install github.com/RainerGewalt/trail-evidence/go/cmd/trail-evidence@v0.2.1
 trail-evidence verify .demo/scenarios/tamper/journal/tampered-resealed.jsonl
 
-pip install trail-evidence==0.2.0
+pip install trail-evidence==0.2.1
 trail-evidence-py verify .demo/scenarios/tamper/journal/tampered-resealed.jsonl
 ```
 

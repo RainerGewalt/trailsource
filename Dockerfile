@@ -4,7 +4,7 @@
 # the build stage cross-compiles on the build platform.
 # The Go version is the go line of go.mod (scripts/check_toolchain.sh).
 FROM --platform=$BUILDPLATFORM golang:1.26.11-alpine3.24 AS build
-ARG VERSION=0.1.0-dev
+ARG VERSION=dev
 ARG TARGETOS=linux
 ARG TARGETARCH
 WORKDIR /src

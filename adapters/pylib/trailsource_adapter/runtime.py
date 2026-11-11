@@ -22,7 +22,7 @@ from trailsource_evidence.config import config_version, expand_env
 
 log = logging.getLogger("trailsource")
 
-VERSION = os.getenv("TRAILSOURCE_VERSION", "0.1.0-dev")
+VERSION = os.getenv("TRAILSOURCE_VERSION", "dev")
 
 EVENT_VALUE = "source.value.observed"
 EVENT_INVENTORY = "source.inventory.changed"

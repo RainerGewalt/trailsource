@@ -31,10 +31,10 @@ import (
 // version from the build info instead, so records name the real version.
 // Either way the version is written without the tag's leading "v" (0.1.0),
 // the same in release archives, container images and go install builds.
-var version = "0.1.0-dev"
+var version = "dev"
 
 func init() {
-	if version == "0.1.0-dev" {
+	if version == "dev" {
 		if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
 			version = bi.Main.Version
 		}

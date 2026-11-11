@@ -14,7 +14,7 @@ dependencies was read or copied for this repository.
 | OPC UA simulator | the owner's IT/OT showcase (Python asyncua) | rewritten for an extrusion line; address-space change trigger added |
 | Time semantics and `config_version` with secret masking | one stdlib-only event envelope module from the owner's bridge prototype | ported to Go and reused in Python |
 | Architecture document | the owner's showcase architecture notes | rewritten for the adapter scope |
-| RFC 8785 canonicalisation | `github.com/gowebpki/jcs` (Go, Apache-2.0); Python number and sort logic follows the owner's [trail-evidence](https://github.com/RainerGewalt/trail-evidence) reference package | library dependency; the Python module is a port of that package, which is published since v0.2.0 (`pip install trail-evidence`) but not used here yet |
+| RFC 8785 canonicalisation | `github.com/gowebpki/jcs` (Go, Apache-2.0); Python number and sort logic follows the owner's [trail-evidence](https://github.com/RainerGewalt/trail-evidence) reference package | library dependency; the Python module is a port of that package, which is published on PyPI (`pip install trail-evidence`) but not used here yet |
 
 ## Dependencies
 
@@ -28,7 +28,7 @@ simulator only).
 
 The record format follows the Trail Evidence Record v1 draft maintained
 alongside the [trail-evidence](https://github.com/RainerGewalt/trail-evidence)
-library. That library is published: v0.2.0 is released as the Go module
+library. That library is published: v0.2.1 is released as the Go module
 `github.com/RainerGewalt/trail-evidence/go` and as the Python package
 `trail-evidence` on PyPI, and TrailSource journals verify with its
 reference verifier with the same findings (`docs/INTEROP.md`). TrailSource

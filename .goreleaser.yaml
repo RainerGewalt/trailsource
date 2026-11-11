@@ -61,7 +61,7 @@ release:
     `git clone https://github.com/RainerGewalt/trailsource.git && cd trailsource && make sim-venv scenario-inventory-change`
 
     That runs a simulated OPC UA server, Mosquitto and the adapter as local
-    processes (needs Go, `mosquitto` and Python 3.8+), adds two nodes at
+    processes (needs Go, `mosquitto` and Python 3.9 or newer), adds two nodes at
     runtime and ends with `trailsource verify` and an HTML report. For a
     server of your own see `docs/CONNECT_YOUR_SERVER.md`.
 
