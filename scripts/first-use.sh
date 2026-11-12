@@ -14,7 +14,9 @@
 # (broker and mosquitto_sub), Python 3.9 or newer, Docker with Compose v2, and
 # free ports: 18830, 48400 and 48401 (scenarios; SCENARIO_MQTT_PORT and
 # SCENARIO_OPC_PORT move them), 18831 and 48410 (your own server, played by
-# the bundled simulator), 1883, 4840, 5020 and 8080 (demo stack). The
+# the bundled simulator), 1883, 4840, 5020 and 8080 (demo stack; the
+# Compose variables MQTT_PORT, OPCUA_PORT, MODBUS_PORT and ENIP_SHIM_PORT
+# move them). The
 # journals are checked with the pinned independent verifier trail-evidence,
 # which this script installs for the run (L3); that step cannot be skipped.
 #
@@ -33,6 +35,9 @@ OWN_OPC=48410
 export SCENARIO_MQTT_PORT="${SCENARIO_MQTT_PORT:-18830}"
 export SCENARIO_OPC_PORT="${SCENARIO_OPC_PORT:-48400}"
 SC_PORTS="$SCENARIO_MQTT_PORT $SCENARIO_OPC_PORT $((SCENARIO_OPC_PORT + 1))"
+# Host ports of the demo stack, as docker-compose.yaml reads them.
+export MQTT_PORT="${MQTT_PORT:-1883}" OPCUA_PORT="${OPCUA_PORT:-4840}" MODBUS_PORT="${MODBUS_PORT:-5020}" ENIP_SHIM_PORT="${ENIP_SHIM_PORT:-8080}"
+DEMO_PORTS="$MQTT_PORT $OPCUA_PORT $MODBUS_PORT $ENIP_SHIM_PORT"
 
 here="$(cd "$(dirname "$0")/.." && pwd)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/trailsource-first-use.XXXXXX")"
@@ -141,8 +146,8 @@ gov="$(cd "$here" && go env GOVERSION 2>/dev/null)" ||
 	fail "go cannot build this module: go.mod requires Go $gowant (with GOTOOLCHAIN=local an older go stops here)"
 [[ "$(printf '%s\n%s\n' "$gowant" "${gov#go}" | sort -V | head -n 1)" == "$gowant" ]] ||
 	fail "Go $gov is older than $gowant, which go.mod requires"
-for port in $SC_PORTS $OWN_MQTT $OWN_OPC 1883 4840 5020 8080; do
-	port_in_use "$port" && fail "port $port is in use (scenarios: ${SC_PORTS// /, }; own server: $OWN_MQTT, $OWN_OPC; demo: 1883, 4840, 5020, 8080)"
+for port in $SC_PORTS $OWN_MQTT $OWN_OPC $DEMO_PORTS; do
+	port_in_use "$port" && fail "port $port is in use (scenarios: ${SC_PORTS// /, }; own server: $OWN_MQTT, $OWN_OPC; demo: ${DEMO_PORTS// /, })"
 done
 for name in trailsource_mosquitto trailsource_opcua_sim trailsource_opcua_adapter; do
 	[[ -z "$(docker ps -aq --filter "name=^${name}$")" ]] || fail "a container named $name exists; stop your own demo first (make demo-down)"
@@ -312,8 +317,8 @@ if [[ -n $RELEASE ]]; then
 else
 	make demo >"$work/logs/demo.log" 2>&1 || fail "make demo: $(tail -n 5 "$work/logs/demo.log")"
 fi
-wait_port 1883 "demo broker"
-mosquitto_sub -h localhost -t 'trailsource/#' -v >"$work/logs/demo-topics.log" 2>&1 &
+wait_port "$MQTT_PORT" "demo broker"
+mosquitto_sub -h localhost -p "$MQTT_PORT" -t 'trailsource/#' -v >"$work/logs/demo-topics.log" 2>&1 &
 pids+=($!)
 wait_for "$work/logs/demo-topics.log" '^trailsource/plant-a/ext-01/extruder-01/values ' "value record from the demo OPC UA adapter"
 docker compose stop opcua-adapter modbus-adapter ethernetip-adapter >/dev/null 2>&1 || fail "stopping the demo adapters"

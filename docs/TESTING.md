@@ -151,7 +151,9 @@ Recorded controls:
 - `make ci`: gofmt, vet, tests, Python compile, Compose configuration and
   the demo-init check.
 - `make scenarios`: L4. `SCENARIO_MQTT_PORT` and `SCENARIO_OPC_PORT` move
-  its ports; `make first-use` passes them on.
+  its ports; `make first-use` passes them on, and the Compose variables
+  `MQTT_PORT`, `OPCUA_PORT`, `MODBUS_PORT` and `ENIP_SHIM_PORT` move the
+  host ports of its demo stack.
 - `make first-use`, `make first-use RELEASE=x.y.z`: L3 to L5.
 
 ## CI
