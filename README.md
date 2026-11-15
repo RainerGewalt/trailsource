@@ -267,8 +267,8 @@ Container image (linux/amd64, linux/arm64, runs as uid 10001, contains the
 OPC UA adapter only):
 
 ```sh
-docker pull ghcr.io/rainergewalt/trailsource:0.1.1
-docker run --rm ghcr.io/rainergewalt/trailsource:0.1.1 endpoints opc.tcp://<your-server>:4840
+docker pull ghcr.io/rainergewalt/trailsource:0.1.2
+docker run --rm ghcr.io/rainergewalt/trailsource:0.1.2 endpoints opc.tcp://<your-server>:4840
 ```
 
 Replace `<your-server>` with the host of your OPC UA server; the container
@@ -289,7 +289,7 @@ docker run --rm --read-only --user "$(id -u):$(id -g)" \
   -v "$PWD/configs/mapping:/config/mapping:ro" \
   -v "$PWD/pki:/pki" -v "$PWD/state:/state" -v "$PWD/journal:/journal" \
   -e TRAILSOURCE_OPCUA_USERNAME -e TRAILSOURCE_OPCUA_PASSWORD \
-  ghcr.io/rainergewalt/trailsource:0.1.1 run --config /config/trailsource.yaml
+  ghcr.io/rainergewalt/trailsource:0.1.2 run --config /config/trailsource.yaml
 ```
 
 TrailSource only reads from the server; `--read-only` also keeps the

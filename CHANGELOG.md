@@ -5,6 +5,8 @@ Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+## 0.1.2 - 2026-11-15
+
 A correction release: no new features. It addresses the quality audit of
 8 November 2026.
 
