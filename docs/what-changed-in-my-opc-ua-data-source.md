@@ -19,9 +19,10 @@ version and that setup.
 
 ## Why a plain reconnect hides the change
 
-- **Namespace indexes belong to a session.** The same variable can be
-  `ns=2;s=Plant.Line01…` before the restart and `ns=3;s=Plant.Line01…`
-  after it. A comparison of raw NodeIds reports that every node changed.
+- **A namespace index can change.** A server may give a namespace a
+  different index after a restart; only the namespace URI is stable. The
+  same variable can be `ns=2;s=Plant.Line01…` before the restart and
+  `ns=3;s=Plant.Line01…` after it. A comparison of raw NodeIds reports that every node changed.
 - **Browse order is not stable.** A server may return the same references
   in a different order. A comparison of browse results in sequence reports
   a change where there is none.
