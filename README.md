@@ -96,7 +96,8 @@ restarts, the state at the end, and the verification result.
 
 ```
 Verify   OK: 141 records in 1 stream(s), 0 error(s), 1 notice(s)
-         Every record in this file verifies and links to the one before it.
+         All records in this journal pass hash verification, and every chain
+         link holds from each stream's first record in this file onwards.
 
 Stream plant-a-ext-01-extruder-01-opcua
   Period    2026-11-03T17:23:39.721Z .. 2026-11-03T17:23:59.958Z (20.237s)

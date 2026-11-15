@@ -1,7 +1,8 @@
 TrailSource report
 Journal  journal.jsonl
 Verify   OK: 15 records in 1 stream(s), 0 error(s), 2 notice(s)
-         Every record in this file verifies and links to the one before it.
+         All records in this journal pass hash verification, and every chain
+         link holds from each stream's first record in this file onwards.
 
 Stream plant-a-ext-01-extruder-01-opcua
   Producer  trailsource-opcua-extruder-01, version 0.2.0-test

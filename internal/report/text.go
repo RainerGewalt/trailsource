@@ -48,11 +48,15 @@ func (r *Report) Verdict() string {
 		return "The journal holds no records, so there is nothing to verify; an empty file proves nothing. " +
 			"Check journal.enabled and journal.path in the adapter's configuration."
 	case !r.OK:
-		return "FAIL means the journal is not what was sealed: the findings name every line whose hashes or links do not hold. " +
-			"One cause besides an edit is known: a chain_break at the first record after a restart can also come from an adapter " +
-			"that stopped between saving its chain position and writing that record; verification alone cannot tell the two apart."
+		return "Verification failed. The findings identify which checks failed and where. " +
+			"A broken hash or chain link may indicate that the journal was changed after sealing. " +
+			"A chain_break at the first record after a restart can also occur if the adapter stopped between saving its chain position " +
+			"and writing the next record. Verification alone cannot distinguish these causes."
 	default:
-		return "Every record in this file verifies and links to the one before it."
+		// A stream may begin with a restart whose earlier segment is not in
+		// this file; that link cannot be checked, so the verdict stops at the file.
+		return "All records in this journal pass hash verification, and every chain link holds " +
+			"from each stream's first record in this file onwards."
 	}
 }
 

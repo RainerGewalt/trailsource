@@ -69,6 +69,65 @@ func TestEmptyJournalIsNotOK(t *testing.T) {
 	}
 }
 
+// The verdict claims only what verification checked. FAIL names what was
+// observed and both known causes without deciding between them. OK does not
+// say that a stream's first record links to one before it: a journal may
+// begin with a restart whose earlier segment is not in the file, and that
+// link cannot be checked.
+func TestVerdictClaimsOnlyWhatWasChecked(t *testing.T) {
+	raw := loadFixture(t)
+	lines := bytes.SplitAfter(bytes.TrimRight(raw, "\n"), []byte("\n"))
+	var midStream []byte // from the restart at seq 12: the earlier segment is missing
+	for i, l := range lines {
+		if i > 0 && bytes.Contains(l, []byte(`"chain_restart":true`)) {
+			midStream = bytes.Join(lines[i:], nil)
+			break
+		}
+	}
+	if midStream == nil {
+		t.Fatal("fixture has no restart after its first record")
+	}
+	tampered := bytes.Replace(raw, []byte(`"value":191`), []byte(`"value":199`), 1)
+
+	for name, journal := range map[string][]byte{"ok": raw, "mid-stream": midStream} {
+		r, err := Build(name+".jsonl", journal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !r.OK {
+			t.Fatalf("%s: want OK, got %s", name, r.VerifySummary())
+		}
+		v := r.Verdict()
+		for _, claim := range []string{"links to the one before it", "starting condition"} {
+			if strings.Contains(v, claim) {
+				t.Errorf("%s: OK verdict claims %q: %q", name, claim, v)
+			}
+		}
+		if !strings.Contains(v, "from each stream's first record in this file onwards") {
+			t.Errorf("%s: OK verdict does not bound the chain to this file: %q", name, v)
+		}
+	}
+
+	r, err := Build("tampered.jsonl", tampered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := r.Verdict()
+	for _, want := range []string{"Verification failed.", "may indicate", "chain_break", "cannot distinguish these causes"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("FAIL verdict lacks %q: %q", want, v)
+		}
+	}
+	for _, claim := range []string{"not what was sealed", "Usually", "FAIL means"} {
+		if strings.Contains(v, claim) {
+			t.Errorf("FAIL verdict decides the cause (%q): %q", claim, v)
+		}
+	}
+	if text := strings.Join(strings.Fields(renderText(t, r)), " "); !strings.Contains(text, v) {
+		t.Errorf("text report does not carry the FAIL verdict")
+	}
+}
+
 // With FAIL the findings come right after the verdict, before the streams.
 func TestFailShowsFindingsFirst(t *testing.T) {
 	raw := bytes.Replace(loadFixture(t), []byte(`"value":191`), []byte(`"value":199`), 1)
