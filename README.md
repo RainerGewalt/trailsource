@@ -24,6 +24,9 @@ scenario-server-restart`, a local run against the bundled simulator on
 back after an eight-second gap with two new variables, and the report
 names both the gap and the new address-space generation.*
 
+A walk-through of one run, with its full output and what it does not
+show: [What changed in my OPC UA data source?](docs/what-changed-in-my-opc-ua-data-source.md)
+
 ## Three questions this answers
 
 Each answer is one command, runs locally in about half a minute against the
