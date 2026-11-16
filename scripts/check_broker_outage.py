@@ -25,6 +25,7 @@ Prints a short summary; exit code 1 on any violation. Stdlib only.
 import argparse
 import json
 import sys
+import time
 from datetime import datetime
 
 
@@ -37,9 +38,11 @@ def parse_time(s):
         return None
 
 
-def records(path):
+def records(path, live=False):
     with open(path, "r", encoding="utf-8") as fh:
         for line in fh:
+            if live and not line.endswith("\n"):
+                break  # The writer has not completed this append yet.
             if line.strip():
                 yield json.loads(line)
 
@@ -48,12 +51,21 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("journal")
     ap.add_argument("--max-read-lag-s", type=float, default=5.0)
+    ap.add_argument("--max-record-lag-s", type=float, default=5.0)
     ap.add_argument("--read-after", default="")
+    ap.add_argument("--sample", default="")
+    ap.add_argument("--samples", default="")
+    ap.add_argument("--health", default="")
     args = ap.parse_args()
+
+    if args.sample:
+        count = sum(rec.get("event_type") == "source.value.observed" for rec in records(args.journal, live=True))
+        print(json.dumps({"phase": args.sample, "at": time.monotonic(), "values": count}))
+        return 0
 
     if args.read_after:
         after = parse_time(args.read_after)
-        for rec in records(args.journal):
+        for rec in records(args.journal, live=True):
             if rec.get("event_type") != "source.value.observed":
                 continue
             t = parse_time((rec.get("time") or {}).get("read_at"))
@@ -64,7 +76,10 @@ def main():
     problems = []
     values = 0
     worst = None  # (lag seconds, seq)
+    worst_record_lag = 0.0
+    total_records = 0
     for rec in records(args.journal):
+        total_records += 1
         p = rec.get("payload") or {}
         et, code, seq = rec.get("event_type"), p.get("reason_code"), rec.get("seq")
         if et == "source.subscription.changed" or code == "source.subscription_stalled":
@@ -77,6 +92,12 @@ def main():
         elif et == "source.value.observed":
             values += 1
             read_at = parse_time((rec.get("time") or {}).get("read_at"))
+            recorded_at = parse_time((rec.get("time") or {}).get("recorded_at"))
+            if read_at is not None and recorded_at is not None:
+                journal_lag = (recorded_at - read_at).total_seconds()
+                worst_record_lag = max(worst_record_lag, journal_lag)
+                if journal_lag > args.max_record_lag_s:
+                    problems.append("seq %s: journal is %.3f s behind read_at; MQTT must not block local recording" % (seq, journal_lag))
             source = parse_time(p.get("source_timestamp"))
             if read_at is None or source is None:
                 continue
@@ -91,6 +112,35 @@ def main():
         problems.append("no value records")
     print("broker outage: %d value records, largest read_at - source_timestamp %s"
           % (values, "%.3f s (seq %s)" % worst if worst else "n/a"))
+    print("largest recorded_at - read_at: %.3f s" % worst_record_lag)
+    if args.samples:
+        samples = {s["phase"]: s for s in records(args.samples)}
+        rates = {}
+        for name, begin, end in (("normal", "normal_start", "normal_end"),
+                                  ("frozen", "normal_end", "frozen_end"),
+                                  ("absent", "frozen_end", "absent_end")):
+            a, b = samples[begin], samples[end]
+            rates[name] = (b["values"] - a["values"]) / (b["at"] - a["at"])
+        print("journal values/s: " + ", ".join("%s=%.2f" % pair for pair in rates.items()))
+        if rates["normal"] <= 0:
+            problems.append("no normal-rate baseline")
+        for phase in ("frozen", "absent"):
+            if rates[phase] < 0.65 * rates["normal"]:
+                problems.append("%s journal rate below 65%% of the measured normal rate" % phase)
+    if args.health:
+        with open(args.health, encoding="utf-8") as fh:
+            health = json.load(fh)
+        fields = ("mqtt_records_published", "mqtt_records_dropped", "mqtt_records_unconfirmed")
+        if health.get("status") != "down" or health.get("mqtt_queue_depth") != 0:
+            problems.append("final health is not down with an empty queue")
+        if any(not isinstance(health.get(k), int) for k in fields):
+            problems.append("transport counters missing from health")
+        else:
+            if sum(health[k] for k in fields) != total_records:
+                problems.append("transport counters do not account for every journal record")
+            if health["mqtt_records_dropped"] + health["mqtt_records_unconfirmed"] == 0:
+                problems.append("outage has no recorded transport loss/uncertainty")
+            print("transport: " + ", ".join("%s=%d" % (k, health[k]) for k in fields))
     shown = problems[:20]
     for msg in shown:
         print("FAIL: " + msg, file=sys.stderr)

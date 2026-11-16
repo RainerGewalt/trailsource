@@ -107,6 +107,12 @@ before the gap, so the reader can tell detection delay from outage.
 
 ## restart
 
+After the orderly restart, the scenario also kills the collecting adapter
+three times with SIGKILL and reopens the same journal and state files. Each
+start must resume collection and the combined journal must verify. These
+process kills complement the deterministic crash-window tests in L2; they
+are not a power-loss test.
+
 The adapter is stopped with SIGTERM and started again three seconds later.
 On the way down it records `source.connection_closed`. On the way up the
 first record is `source.bridge.restarted` with `reason_code: common.restart`
@@ -291,12 +297,20 @@ journal, then checks with `scripts/check_broker_outage.py`, besides
    record other than the start and the orderly stop;
 2. every value's `read_at` is at most 5 s after its source timestamp:
    `read_at` is when the value reached the adapter, not when the adapter
-   got round to sealing it.
+   got round to sealing it;
+3. `recorded_at` is at most 5 s after `read_at`, so the journal does not
+   wait for the broker. Samples taken during normal operation, before
+   unfreezing and before restarting the broker measure the local rate;
+   each outage phase must retain at least 65% of the measured normal rate
+   (a tolerance for simulator scheduling and interval boundaries);
+4. the final retained health accounts for every journal record as
+   published, dropped or unconfirmed, and reports transport loss/uncertainty.
 
-The journal falls behind the source during the outage and catches up
-afterwards (docs/ARCHITECTURE.md, "Broker outage"); records whose publish
-failed are in the journal and not sent again, so an MQTT subscriber sees
-gaps in `seq`. This scenario needs the runner's own broker; it refuses
+The local journal continues during both outage phases. Transport drops and
+unconfirmed sends stay in the journal; there is no application replay
+(docs/ARCHITECTURE.md, "Broker outage"). Paho may retransmit in-flight QoS
+messages, so an unconfirmed send is not proof of loss. This scenario needs
+the runner's own broker and `mosquitto_sub` for health; it refuses
 `SCENARIO_BROKER=external`.
 
 ## The same scenarios against the container stack

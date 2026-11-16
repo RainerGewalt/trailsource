@@ -229,16 +229,21 @@ trail-evidence-py verify journal/<source-id>.jsonl
   without an anchor outside it.
 - It is not a broker, historian, dashboard or rules engine.
 
-Known limits of 0.1:
+Known limits (the OPC UA F/G corrections below are unreleased; 0.1.2 still
+waits for MQTT in the recording loop and saves chain state before the journal):
 
-- The journal is written in the same loop as the MQTT publish. During a
-  broker outage it falls behind the source and catches up afterwards;
-  after roughly 17 minutes of outage (computed, not measured) the OPC UA
-  server starts to drop values that no record mentions (`docs/ARCHITECTURE.md`, "Broker
-  outage").
-- An adapter that stops between saving its chain position and writing
-  the record leaves a `chain_break` at its next start that verification
-  cannot tell apart from an edit.
+- MQTT delivery uses a bounded in-memory queue of 256 records. Overflow
+  and disconnected sends are dropped from transport; failed or timed-out
+  attempts are counted as unconfirmed. There is no durable outbox or
+  application replay. The local journal continues independently; disk
+  stalls and source-side losses remain possible. Health reports transport
+  counters once the broker is reachable (`docs/ARCHITECTURE.md`, "Broker outage").
+- With journaling enabled, each record is appended and synced before
+  chain state is saved. A write/sync/state error stops the adapter. On
+  restart a verified journal supplies the anchor, and a disagreement with
+  saved state is recorded explicitly. This cannot establish whether a
+  crash or changed files caused the disagreement, or restore missing
+  records. Invalid journals are preserved and startup fails.
 - One journal file per source, about 2.3 KB per value record, no built-in
   rotation; `verify` and `report` read the whole file into memory. How to
   rotate by hand: `docs/ARCHITECTURE.md`, "Journal size and rotation".

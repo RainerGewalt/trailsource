@@ -136,7 +136,7 @@ table.stack td::before{content:attr(data-label);display:block;color:var(--muted)
 <section>
 <table class="stack">
 <tr class="head"><th>Seq</th><th>Recorded</th><th>Anchor</th><th>After previous record</th></tr>
-{{range .Restarts}}<tr><td data-label="Seq" class="num">{{.Seq}}</td><td data-label="Recorded" class="mono">{{.RecordedAt}}</td><td data-label="Anchor">{{if .AnchorGenesis}}genesis (start of the stream){{else}}<code>{{short .Anchor}}</code>{{end}}</td><td data-label="After previous record">{{.AfterPrevious}}</td></tr>{{end}}
+{{range .Restarts}}<tr><td data-label="Seq" class="num">{{.Seq}}</td><td data-label="Recorded" class="mono">{{.RecordedAt}}</td><td data-label="Anchor">{{if .AnchorGenesis}}genesis (start of the stream){{else}}<code>{{short .Anchor}}</code>{{end}}{{if .Detail}}<p>{{.ChainState}}: {{.Detail}}</p>{{end}}</td><td data-label="After previous record">{{.AfterPrevious}}</td></tr>{{end}}
 </table>
 </section>
 {{end}}

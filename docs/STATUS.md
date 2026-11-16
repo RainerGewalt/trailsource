@@ -33,8 +33,8 @@ joined by underscores). The severity is the catalog's.
 
 | Code | Severity | When |
 |---|---|---|
-| `common.restart` | info | The process started and continues the stream with a new segment, anchored at the last `chain_hash` it knows, or at genesis for a stream that has no records yet. `payload.chain_state` is `resumed` or `new`. |
-| `common.state_lost` | warning | The process started without chain state although the journal or the inventory snapshot already holds records: the state file was deleted or replaced. The new segment is anchored at genesis; `payload.chain_state` is `lost`. |
+| `common.restart` | info | The process started and continues the stream with a new segment. `payload.chain_state` is `resumed` or `new`. In unreleased OPC UA hardening it can also be `recovered`: the saved state differed from the verified journal; `payload.recovery` and `detail` report that discrepancy and its limits. |
+| `common.state_lost` | warning | The process started without chain state although prior evidence exists. Unreleased OPC UA hardening recovers a valid active journal's position (`chain_state: recovered`); without that journal it anchors at genesis (`lost`). The observation alone cannot establish why state was lost. |
 
 ### On `source.connection.changed`
 

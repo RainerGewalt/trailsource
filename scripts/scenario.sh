@@ -199,6 +199,14 @@ restart)
   start_adapter
   wait_for '"chain_restart":true' 2 30 "second chain_restart record (anchor = last chain_hash before the stop)"
   sleep 4
+  for attempt in 1 2 3; do
+    say "crash probe $attempt: SIGKILL during collection, then restart with the same files"
+    before=$(count '"source.value.observed"')
+    kill -KILL "$ADAPTER_PID"; wait "$ADAPTER_PID" 2>/dev/null || true; ADAPTER_PID=
+    start_adapter
+    wait_for '"chain_restart":true' "$((attempt + 2))" 30 "restart after SIGKILL $attempt"
+    wait_for '"source.value.observed"' "$((before + 10))" 30 "values after SIGKILL $attempt"
+  done
   finish
   ;;
 server-restart)
@@ -256,6 +264,7 @@ silent-subscription)
   ;;
 broker-outage)
   [ "${SCENARIO_BROKER:-}" != "external" ] || die "broker-outage freezes and kills its own Mosquitto; run it without SCENARIO_BROKER=external"
+  command -v mosquitto_sub >/dev/null || die "broker-outage needs mosquitto_sub for retained health accounting"
   # The OPC UA server runs throughout; only the transport fails. A keep-alive
   # window of about 3 s against an MQTT publish that waits up to 15 s: if
   # the stall supervision measured the adapter's own waiting, it would fire.
@@ -266,15 +275,22 @@ broker-outage)
   start_adapter
   wait_for '"reason_code":"source.inventory_initial"' 1 30 "initial inventory"
   wait_for '"source.value.observed"' 50 30 "50 value records"
+  samples="$SCENARIO_DIR/journal-rate.jsonl"
+  "$SIM_PYTHON" scripts/check_broker_outage.py "$JOURNAL" --sample normal_start > "$samples"
+  sleep 5
+  "$SIM_PYTHON" scripts/check_broker_outage.py "$JOURNAL" --sample normal_end >> "$samples"
   say "broker frozen for $FREEZE_S s (SIGSTOP): the connection stays open, nothing is acknowledged"
   kill -STOP "$BROKER_PID"
+  freeze_deadline=$((SECONDS + FREEZE_S))
   wait_log 'mqtt publish timeout' 1 30 "a publish that the broker did not acknowledge"
-  sleep "$FREEZE_S"
+  if [ "$SECONDS" -lt "$freeze_deadline" ]; then sleep "$((freeze_deadline - SECONDS))"; fi
+  "$SIM_PYTHON" scripts/check_broker_outage.py "$JOURNAL" --sample frozen_end >> "$samples"
   kill -CONT "$BROKER_PID"
   say "broker killed (SIGKILL) for $KILL_S s, then started again"
   kill -KILL "$BROKER_PID"; wait "$BROKER_PID" 2>/dev/null || true; BROKER_PID=
   wait_log 'mqtt connection lost' 1 30 "the adapter noticed the lost broker"
   sleep "$KILL_S"
+  "$SIM_PYTHON" scripts/check_broker_outage.py "$JOURNAL" --sample absent_end >> "$samples"
   restarted_at=$("$SIM_PYTHON" -c 'import datetime as d; print(d.datetime.now(d.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z")')
   start_broker
   wait_log 'mqtt connected' 2 60 "the adapter reconnected to the broker"
@@ -283,12 +299,13 @@ broker-outage)
     [ $SECONDS -lt $deadline ] || die "no value read after the broker restart was journaled within 90 s"
     sleep 0.5
   done
-  echo "   seen: a value read after the broker restart is in the journal (the backlog is through)"
+  echo "   seen: a value read after the broker restart is in the journal"
   sleep 2
   set +e; finish; rc=$?; set -e
+  mosquitto_sub -h 127.0.0.1 -p "$SCENARIO_MQTT_PORT" -t 'trailsource/plant-a/ext-01/extruder-01/health' -C 1 -W 10 > "$SCENARIO_DIR/health.json" || die "final retained health unavailable"
   say "a broker outage is not a source event (scripts/check_broker_outage.py)"
-  "$SIM_PYTHON" scripts/check_broker_outage.py "$JOURNAL" || rc=1
-  [ $rc -eq 0 ] || die "the journal does not verify, or it attributes the broker outage to the OPC UA source"
+  "$SIM_PYTHON" scripts/check_broker_outage.py "$JOURNAL" --samples "$samples" --health "$SCENARIO_DIR/health.json" || rc=1
+  [ $rc -eq 0 ] || die "journal integrity, source attribution, recording rate or transport accounting failed"
   ;;
 tamper)
   start_sim 0

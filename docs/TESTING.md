@@ -24,6 +24,23 @@ list against generated certificate chains with and without revocation lists
 (`internal/report`, `testdata/report`), the command line (`cmd/trailsource`).
 `make test`; needs nothing.
 
+The unreleased OPC UA F/G hardening adds deterministic failures in the
+existing L1/L2 gate: journal write, short write and sync failures; a state
+save failing after a durable append; state ahead of/behind the journal
+and missing state; conflicting hashes, malformed/truncated journals,
+foreign streams and reordered records; normal restart and manual rotation.
+Every recovery fixture checks the unchanged prefix, final verification and
+visible recovery limits in text and HTML reports. Its negative control
+uses the unreconciled state and fails verification. A state ahead of the
+journal never causes reuse of a possibly published sequence number.
+
+`internal/mqttpub` uses a controllable transport to test a frozen broker,
+bounded overflow, disconnect/reconnect without replay, timeouts, write
+errors, copied message bodies, ordering, counter accuracy, concurrent
+enqueue/close and shutdown. These tests also run under `go test -race ./...`.
+They do not require a broker; `make scenario-broker-outage` covers the real
+Paho/Mosquitto path, including journal rate and retained health counters.
+
 **L3 Conformance.** TrailSource writes Trail Evidence Records and has to
 agree with the reference:
 

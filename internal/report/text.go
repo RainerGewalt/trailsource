@@ -139,6 +139,9 @@ func (r *Report) WriteText(w io.Writer) error {
 				after = ", " + rs.AfterPrevious + " after the previous record"
 			}
 			fmt.Fprintf(&b, "    seq %-6d %s  %s%s\n", rs.Seq, rs.RecordedAt, anchor, after)
+			if rs.Detail != "" {
+				fmt.Fprintf(&b, "      %s: %s\n", rs.ChainState, rs.Detail)
+			}
 		}
 	}
 

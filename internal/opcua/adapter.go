@@ -46,12 +46,13 @@ const (
 
 // Adapter holds the runtime of one OPC UA source.
 type Adapter struct {
-	cfg     *config.Config
-	mapping *mapping.File
-	sealer  *chain.Sealer
-	journal *journal.Writer
-	pub     *mqttpub.Publisher
-	version string
+	cfg      *config.Config
+	mapping  *mapping.File
+	sealer   *chain.Sealer
+	journal  *journal.Writer
+	pub      publisher
+	version  string
+	recovery *chain.Recovery
 
 	mu             sync.Mutex
 	inventoryHash  string
@@ -62,6 +63,8 @@ type Adapter struct {
 	contextValues  map[string]any // latest values of mapping rules flagged context: true
 	lastEvent      string         // reason code of the latest lifecycle record (docs/STATUS.md)
 	lastSeen       string         // when the source last answered: value, browse or connect
+	persistenceErr error
+	stop           context.CancelFunc
 
 	// Owned by the Run goroutine.
 	everConnected bool      // a session was established in this process
@@ -70,17 +73,32 @@ type Adapter struct {
 	lastRejected  string    // thumbprint of the last rejected server certificate
 }
 
+type publisher interface {
+	Publish(string, []byte) error
+	PublishHealth(any) error
+}
+
 type boundNode struct {
 	node VariableNode
 	res  mapping.Resolution
 }
 
 // Run starts the adapter and blocks until ctx is cancelled or setup fails.
-func Run(ctx context.Context, cfg *config.Config, version string) error {
+func Run(ctx context.Context, cfg *config.Config, version string) (runErr error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	if cfg.Producer.Version != "" {
 		version = cfg.Producer.Version
 	}
 	a := &Adapter{cfg: cfg, version: version, contextValues: map[string]any{}, lastEvent: status.Restart}
+	a.stop = cancel
+	defer func() {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if a.persistenceErr != nil {
+			runErr = a.persistenceErr
+		}
+	}()
 
 	a.mapping = mapping.Empty()
 	if cfg.MappingFile != "" {
@@ -92,24 +110,17 @@ func Run(ctx context.Context, cfg *config.Config, version string) error {
 	}
 
 	producer := evidence.Producer{Kind: evidence.ProducerSourceBridge, ID: cfg.Producer.ID, Version: version}
-	store := chain.FileStore{Path: filepath.Join(cfg.StateDir, cfg.Source.ID+".chain.json")}
-	sealer, err := chain.New(store, producer, cfg.Source.ID)
-	if err != nil {
-		return fmt.Errorf("open chain state: %w", err)
-	}
-	a.sealer = sealer
-
 	// Evidence that exists without chain state means the state was lost,
 	// not that this stream is new (common.state_lost instead of common.restart).
 	priorEvidence := fileHasData(a.snapshotPath())
 	if cfg.Journal.Enabled {
 		priorEvidence = priorEvidence || fileHasData(cfg.Journal.Path)
-		j, err := journal.Open(cfg.Journal.Path)
-		if err != nil {
-			return fmt.Errorf("open journal: %w", err)
-		}
-		a.journal = j
-		defer j.Close()
+	}
+	if err := a.openEvidence(producer); err != nil {
+		return err
+	}
+	if a.journal != nil {
+		defer a.journal.Close()
 	}
 
 	will, _ := evidence.CanonicalJCS(map[string]any{
@@ -130,7 +141,6 @@ func Run(ctx context.Context, cfg *config.Config, version string) error {
 		ClientKeyPath:      cfg.MQTT.TLS.ClientKey,
 		InsecureSkipVerify: cfg.MQTT.TLS.InsecureSkipVerify,
 		ServerName:         cfg.MQTT.TLS.ServerName,
-		OnConnect:          func() { a.publishHealth("up") },
 	})
 	if err != nil {
 		return fmt.Errorf("mqtt: %w", err)
@@ -141,7 +151,7 @@ func Run(ctx context.Context, cfg *config.Config, version string) error {
 		pub.Close()
 	}()
 
-	seq, chainHash, sealed := sealer.Position()
+	seq, chainHash, sealed := a.sealer.Position()
 	log.Printf("trailsource opcua adapter %s source_id=%s endpoint=%s topic_prefix=%s config_version=%s mapping=%s chain_seq=%d chain_hash=%s resumed=%v",
 		version, cfg.Source.ID, cfg.Source.Endpoint, cfg.MQTT.TopicPrefix, cfg.Version, a.mapping.Hash, seq, chainHash, sealed)
 	if err := a.emitStart(sealed, priorEvidence); err != nil {
@@ -911,6 +921,15 @@ func (a *Adapter) emitStart(resumed, priorEvidence bool) error {
 	if detail != "" {
 		payload["detail"] = detail
 	}
+	if a.recovery != nil {
+		payload["chain_state"] = "recovered"
+		payload["recovery"] = a.recovery
+		payload["detail"] = "chain state differed from the verified journal; restart anchored to its last record. An interrupted write or changed local files can cause this; missing records and completeness cannot be established."
+		if a.recovery.Reason == "state_missing" {
+			code = status.StateLost
+			payload["reason_code"] = code
+		}
+	}
 	rec := &evidence.Record{
 		EventType: EventBridgeRestarted,
 		Time:      evidence.Time{ReadAt: evidence.FormatTime(time.Now()), Source: evidence.TimeSourceSystem},
@@ -942,20 +961,37 @@ func (a *Adapter) setLastEvent(code string) {
 	a.mu.Unlock()
 }
 
-// emit seals, journals and publishes a record, in that order. A record that
-// could not be journaled is not published.
-func (a *Adapter) emit(rec *evidence.Record, topic string) error {
-	if err := a.sealer.Seal(rec); err != nil {
-		return err
-	}
+// emit seals, syncs the journal, commits chain state and queues transport.
+// Persistence failures stop collection; transport failure cannot block it.
+func (a *Adapter) emit(rec *evidence.Record, topic string) (emitErr error) {
+	defer func() {
+		if emitErr != nil {
+			a.mu.Lock()
+			if a.persistenceErr == nil {
+				a.persistenceErr = emitErr
+				a.lastError = emitErr.Error()
+			}
+			a.mu.Unlock()
+			if a.stop != nil {
+				a.stop()
+			}
+		}
+	}()
 	var line []byte
 	var err error
 	if a.journal != nil {
-		line, err = a.journal.Append(rec)
+		err = a.sealer.SealAndAppend(rec, func(r *evidence.Record) error {
+			var appendErr error
+			line, appendErr = a.journal.Append(r)
+			return appendErr
+		})
 		if err != nil {
-			return fmt.Errorf("journal: %w", err)
+			return err
 		}
 	} else {
+		if err := a.sealer.Seal(rec); err != nil {
+			return err
+		}
 		line, err = evidence.CanonicalJCS(rec)
 		if err != nil {
 			return err
@@ -964,7 +1000,10 @@ func (a *Adapter) emit(rec *evidence.Record, topic string) error {
 	a.mu.Lock()
 	a.recordsEmitted++
 	a.mu.Unlock()
-	return a.pub.Publish(topic, line)
+	if err := a.pub.Publish(topic, line); err != nil {
+		log.Printf("mqtt record not queued (local evidence retained): %v", err)
+	}
+	return nil
 }
 
 func (a *Adapter) actor() evidence.Actor {

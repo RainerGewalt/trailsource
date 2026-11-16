@@ -108,6 +108,8 @@ type Restart struct {
 	Anchor        string `json:"anchor"`
 	AnchorGenesis bool   `json:"anchor_genesis"`
 	AfterPrevious string `json:"after_previous,omitempty"` // time since the previous record of the stream
+	ChainState    string `json:"chain_state,omitempty"`
+	Detail        string `json:"detail,omitempty"`
 }
 
 // FromFile builds the report of a journal file.
@@ -279,6 +281,13 @@ func summarise(sid string, entries []entry) Stream {
 
 		if e.restart {
 			rs := Restart{Seq: e.seq, Line: e.line, RecordedAt: e.recordedAt, Anchor: e.anchor, AnchorGenesis: e.anchor == evidence.GenesisHash}
+			var p struct {
+				ChainState string `json:"chain_state"`
+				Detail     string `json:"detail"`
+			}
+			if json.Unmarshal(e.payload, &p) == nil {
+				rs.ChainState, rs.Detail = p.ChainState, p.Detail
+			}
 			if i > 0 {
 				rs.AfterPrevious = between(prevRecordAt, e.recordedAt)
 				if open == nil {

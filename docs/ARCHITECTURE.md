@@ -112,11 +112,24 @@ connect ──> browse ──> reconcile ──> subscribe ──(rebrowse timer
 
 ## Emit order
 
-For every record: seal (assign `seq`, `prev_hash`, hashes; persist chain
-state), append to the journal, publish to MQTT. A record that could not be
-sealed or journaled is not published. A record that was journaled but whose
-publish failed (no acknowledgement within 15 s) stays in the journal and the
-chain; it is not sent again, and MQTT subscribers see the gap in `seq`.
+The following OPC UA hardening is unreleased; versions through 0.1.2 save
+chain state before appending and publish synchronously.
+
+For every record with journaling enabled: seal (assign `seq`, `prev_hash`
+and hashes), append the JSON line, sync the journal, save the chain state,
+then enqueue the same bytes for MQTT. The state file is synced before its
+temporary file is renamed. An append, short write, sync or state-save error
+latches recording closed, cancels the adapter and returns an error; no later
+record is sealed or published in that process. A state-save failure can
+leave one durable journal record ahead of the saved state. Startup reconciles
+that position as described below.
+
+Per-record syncing trades write throughput for a smaller crash window. It
+does not prove power-loss durability on every filesystem or device: directory
+entries are not synced, and storage may not honour flushes. One process must
+own a journal and state pair; concurrent writers are unsupported. With
+journaling disabled, only chain state is saved and journal recovery is
+unavailable. The preview Python adapters retain their previous behaviour.
 
 ## Broker outage
 
@@ -124,22 +137,30 @@ The source and the transport are kept apart: a broker that stops
 answering or goes away is never recorded as a gap, a stall or a lost
 connection of the OPC UA source (`make scenario-broker-outage`, docs/SCENARIOS.md).
 
-- Publish responses from the server keep arriving while the adapter waits
-  for the broker. Each is stamped with its arrival time, which becomes the
-  value's `read_at`, and waits in a queue (1024 responses in TrailSource,
-  1024 more in the OPC UA stack).
-- The publish is synchronous and runs in the same loop as sealing: while
-  the broker does not acknowledge, the adapter waits up to 15 s per record
-  before it seals the next one. The journal therefore falls behind the
-  source during an outage (by up to 75 s in the scenario: 30 s frozen, 20 s
-  gone) and catches up once the broker is back; `recorded_at` minus
-  `read_at` shows the delay.
-- Limit of 0.1: when both queues are full, at one publish response per
-  500 ms after roughly 17 minutes of outage (computed, not measured), the
-  OPC UA stack stops asking for publish responses, the server keeps only
-  its monitored-item queues (TrailSource asks for 10 values per item) and
-  drops older values, and no record says so. A journal that is written
-  independently of MQTT is not part of 0.1.
+- Source notifications retain their arrival timestamp as `read_at`. The
+  adapter records them without waiting for MQTT acknowledgements.
+- One MQTT worker serves a queue of 256 records and one coalesced latest
+  health snapshot. Queue overflow drops the new transport record. Records
+  dequeued while disconnected are dropped before being handed to Paho.
+  A queued record may be sent if the broker returns before it is dequeued;
+  there is no journal replay, durable outbox or application retry. Paho's
+  protocol-level QoS retransmission can still deliver a timed-out attempt.
+- The retained health message adds process-local counters:
+  `mqtt_records_dropped` (no send attempt: overflow, disconnected or shutdown),
+  `mqtt_records_unconfirmed` (send attempted, but error, timeout or shutdown
+  before confirmation), and `mqtt_records_published` (Paho reports success).
+  A success is not proof of consumer processing. It also includes
+  `mqtt_queue_depth` and `mqtt_queue_capacity`. Counters reset on process
+  start and health is not a durable evidence record. While the broker is
+  unavailable, it cannot carry fresh health; counters become observable
+  after reconnection, with the next health update.
+- The worker waits at most 15 s for an acknowledgement. Shutdown cancels
+  that wait, counts queued records as dropped and attempts a final health
+  update. Paho's `Publish` call itself retains its 20 s write timeout;
+  disconnect and the final health update are best effort.
+- A slow or failed disk can still delay or stop local recording. The
+  bounded OPC UA notification queues and server sampling/queue limits
+  remain; this change does not promise complete source capture.
 - The adapter starts only with a reachable broker: `run` waits up to 25 s
   for the first MQTT connection and then ends with an error that names the
   broker. No record is sealed before; the journal file may already exist,
@@ -167,9 +188,10 @@ To rotate by hand:
 Verified on its own, the new file reports that restart as a notice whose
 previous segment is not in this journal; the files concatenated in order
 (`cat old.jsonl new.jsonl | trailsource verify -`) verify as one chain
-(run of 11 November against the simulator). Deleting the chain state
-instead starts a new chain at genesis, recorded as `common.state_lost`
-while the inventory snapshot or a journal file is still there.
+(run of 11 November against the simulator). If chain state is missing but
+the active journal is valid and nonempty, startup recovers its position and
+records `common.state_lost`. If only an inventory snapshot remains, startup
+still anchors at genesis with that code.
 
 ## State files
 
@@ -179,13 +201,33 @@ state/<source_id>.inventory.json   last browse snapshot with generation
 journal/<source_id>.jsonl          every record, one per line
 ```
 
-All files are written atomically (temp file and rename). Every process
-start writes `source.bridge.restarted` as its first record, with
-`chain_restart` and `reason_code: common.restart`. Deleting the chain file
-restarts the stream at `seq 0` anchored to genesis; if the journal or the
-inventory snapshot already holds records, that start record says
-`common.state_lost`. The verifier reports both as a restart notice, not as
-a break, as long as the journal does not contain the previous segment.
+State and inventory use temporary files and rename; the journal is appended,
+never replaced. Before writing, startup verifies the complete existing
+journal and requires one stream in increasing sequence order. An empty or
+moved journal supplies no new anchor, preserving the manual rotation workflow.
+A partial last line, invalid chain, foreign stream, reordered records or a
+conflicting hash at the same saved sequence stops startup without changing
+existing journal bytes. Startup verification currently reads the full
+journal into memory, like `verify` and `report`.
+
+When a valid nonempty journal and saved state disagree, the next
+`source.bridge.restarted` record anchors at the journal tail. Its hashed
+payload contains `chain_state: recovered` and `recovery` with the observed
+previous state, journal position and reason (`state_ahead_of_journal`,
+`state_behind_journal`, or `state_missing`). When saved state is ahead, the
+restart sequence advances beyond that saved sequence, while its anchor
+points to the journal tail; possibly published sequence numbers are not
+reused. The explicit restart permits this sequence jump. It uses `common.restart`, or
+`common.state_lost` for missing state. Text and HTML reports show the recovery
+detail. Matched positions keep the normal `resumed` restart, new streams
+start at genesis with `new`.
+
+The reconciled state is not saved until that restart record has been
+appended and synced, so another interruption during startup cannot silently
+erase the mismatch. Recovery never repairs or re-seals old journal lines.
+An interrupted write and changed/truncated local files can look alike:
+the notice reports the discrepancy, not a proven cause, recovered missing
+data or proof of completeness.
 
 ## Identity and configuration
 

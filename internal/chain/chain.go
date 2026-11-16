@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -58,8 +59,20 @@ func (f FileStore) Save(s State) error {
 		return err
 	}
 	tmp := f.Path + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
+	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
 		return err
+	}
+	defer os.Remove(tmp)
+	if _, err = out.Write(raw); err == nil {
+		err = out.Sync()
+	}
+	closeErr := out.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
 	}
 	return os.Rename(tmp, f.Path)
 }
@@ -82,6 +95,8 @@ type Sealer struct {
 	state    State
 	restart  bool // true until the first record of this process is sealed
 	now      func() time.Time
+	failed   error   // uncertain journal/state commit: no further records until restart
+	nextSeq  *uint64 // restart after state ahead: never reuse a possibly published sequence
 }
 
 // New loads the stream position from store. The first record sealed by the
@@ -113,8 +128,28 @@ func (s *Sealer) Position() (uint64, string, bool) {
 // considered sealed when the state was persisted; on a persistence error the
 // in-memory position is left unchanged.
 func (s *Sealer) Seal(r *evidence.Record) error {
+	return s.seal(r, nil)
+}
+
+// SealAndAppend seals r, durably appends it, then saves the chain position.
+// appendRecord must sync the journal before returning. Any append or state
+// error latches the sealer closed: the caller must restart and reconcile.
+func (s *Sealer) SealAndAppend(r *evidence.Record, appendRecord func(*evidence.Record) error) error {
+	if appendRecord == nil {
+		return errors.New("journal append function is required")
+	}
+	return s.seal(r, appendRecord)
+}
+
+func (s *Sealer) seal(r *evidence.Record, appendRecord func(*evidence.Record) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.failed != nil {
+		return fmt.Errorf("evidence persistence stopped; restart and reconcile: %w", s.failed)
+	}
+	if s.state.Sealed && s.state.Seq == math.MaxUint64 {
+		return errors.New("chain sequence exhausted")
+	}
 
 	r.Schema = evidence.Schema
 	r.Producer = s.producer
@@ -141,6 +176,9 @@ func (s *Sealer) Seal(r *evidence.Record) error {
 	} else {
 		r.Seq = 0
 	}
+	if s.restart && s.nextSeq != nil {
+		r.Seq = evidence.Seq(*s.nextSeq)
+	}
 
 	if err := evidence.Seal(r); err != nil {
 		return err
@@ -152,10 +190,20 @@ func (s *Sealer) Seal(r *evidence.Record) error {
 		UpdatedAt: r.Time.RecordedAt,
 		Sealed:    true,
 	}
+	if appendRecord != nil {
+		if err := appendRecord(r); err != nil {
+			s.failed = fmt.Errorf("append journal: %w", err)
+			return s.failed
+		}
+	}
 	if err := s.store.Save(next); err != nil {
+		if appendRecord != nil {
+			s.failed = fmt.Errorf("persist chain state after journal append: %w", err)
+		}
 		return fmt.Errorf("persist chain state: %w", err)
 	}
 	s.state = next
 	s.restart = false
+	s.nextSeq = nil
 	return nil
 }
