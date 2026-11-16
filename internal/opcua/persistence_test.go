@@ -263,7 +263,7 @@ func TestRotationAndNormalRestartKeepAnchor(t *testing.T) {
 }
 
 func TestStartupRefusesTamperedJournalOrConflictingState(t *testing.T) {
-	for _, kind := range []string{"payload", "same_seq_hash", "foreign_stream", "reordered"} {
+	for _, kind := range []string{"payload", "same_seq_hash", "foreign_stream", "reordered", "trailing_object"} {
 		t.Run(kind, func(t *testing.T) {
 			dir := t.TempDir()
 			a := fixtureAdapter(dir)
@@ -281,6 +281,11 @@ func TestStartupRefusesTamperedJournalOrConflictingState(t *testing.T) {
 			switch kind {
 			case "payload":
 				writeFile(t, path, bytes.Replace(readFile(t, path), []byte(`"value":1`), []byte(`"value":2`), 1))
+			case "trailing_object":
+				// The verifier reads JSON Lines, not a stream of concatenated
+				// objects. Recovery must never trust an unverified second object.
+				extra, _ := json.Marshal(map[string]any{"stream_id": "source", "seq": "999", "chain_hash": evidence.GenesisHash})
+				writeFile(t, path, append(append(bytes.TrimSuffix(readFile(t, path), []byte("\n")), extra...), '\n'))
 			case "same_seq_hash":
 				store := chain.FileStore{Path: filepath.Join(a.cfg.StateDir, "source.chain.json")}
 				state, _, _ := store.Load()

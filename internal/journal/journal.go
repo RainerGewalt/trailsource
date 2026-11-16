@@ -2,6 +2,8 @@
 package journal
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -113,13 +115,17 @@ func (w *Writer) LastRecord(stream string) (*evidence.Record, error) {
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return nil, err
 	}
-	dec := json.NewDecoder(f)
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 64*1024*1024)
 	var last *evidence.Record
-	for {
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
 		var r evidence.Record
-		if err := dec.Decode(&r); err == io.EOF {
-			return last, nil
-		} else if err != nil {
+		// Exactly one object per line, matching the verifier's record unit.
+		if err := json.Unmarshal(line, &r); err != nil {
 			return nil, err
 		}
 		if last != nil && r.Seq <= last.Seq {
@@ -127,4 +133,5 @@ func (w *Writer) LastRecord(stream string) (*evidence.Record, error) {
 		}
 		last = &r
 	}
+	return last, scanner.Err()
 }
