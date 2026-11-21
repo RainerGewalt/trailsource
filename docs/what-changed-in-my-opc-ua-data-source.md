@@ -125,10 +125,13 @@ v0.2.2.
 
 ## What this does not show
 
-- A verified journal is internally consistent: no record was edited,
-  removed, inserted or reordered without re-sealing everything after it.
-  The records are not signed. Whoever controls the file can rewrite and
-  re-seal all of it, and records cut off at the end are not detectable
+- A verified journal is internally consistent: from each stream's first
+  record in the file onwards, no record was edited, removed, inserted or
+  reordered without re-sealing everything after it. The records are not
+  signed. Whoever controls the file can rewrite and re-seal all of it. If
+  a stream's first record in the file is a restart whose earlier segment
+  is missing, records before it cannot be checked, and records cut off at
+  the end of a stream, or a stream removed entirely, are not detectable
   without an anchor outside the file.
 - Nothing in a journal shows that the values the server delivered were
   true.

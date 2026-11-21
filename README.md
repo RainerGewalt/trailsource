@@ -16,12 +16,12 @@ Status: v0.1, OPC UA only, read-only. The Modbus TCP and EtherNet/IP
 adapters in this repository are a preview and not part of the 0.1 gate
 (see "Preview adapters" below).
 
-![TrailSource HTML report of a development build. Verify OK: 141 records in 1 stream, 0 errors, 1 notice; every record in the file verifies and links to the one before it. Stream plant-a-ext-01-extruder-01-opcua with 134 value observations from 30 nodes, all of good quality. Address space generation 2 adds Plant.Line01.Extruder01.BarrelZone07.TempActualC and TempSetpointC. One connection gap of 8.014 seconds with the reason source.connection_lost and the last value before the gap.](docs/screenshots/report-server-restart.png)
+![TrailSource HTML report of a development build. Verify OK: 140 records in 1 stream, 0 errors, 1 notice; all records in this journal pass hash verification, and every chain link holds from each stream's first record in this file onwards. Stream plant-a-ext-01-extruder-01-opcua with 133 value observations from 30 nodes, all of good quality. Address space generation 2 adds Plant.Line01.Extruder01.BarrelZone07.TempActualC and TempSetpointC. One connection gap of 6.029 seconds with the reason source.connection_lost and the last value before the gap.](docs/screenshots/report-server-restart.png)
 
 *`trailsource report --html` for the journal of `make
 scenario-server-restart`, a local run against the bundled simulator on
-11 November 2026 (ports moved with `SCENARIO_OPC_PORT`): the server comes
-back after an eight-second gap with two new variables, and the report
+21 November 2026 (ports moved with `SCENARIO_OPC_PORT`): the server comes
+back after a six-second gap with two new variables, and the report
 names both the gap and the new address-space generation.*
 
 A walk-through of one run, with its full output and what it does not
@@ -223,10 +223,13 @@ trail-evidence-py verify journal/<source-id>.jsonl
 - It does not write. No OPC UA Write or Call, in any configuration.
 - It does not sign records, notarise anything, or make any statement about
   regulatory compliance. A verified journal shows that it is internally
-  consistent: no record was edited, removed or reordered without re-sealing
-  everything after it. Whoever controls the file can rewrite and re-seal all
-  of it, and records cut off at the end of the journal are not detectable
-  without an anchor outside it.
+  consistent: from each stream's first record in the file onwards, no record
+  was edited, removed, inserted or reordered without re-sealing everything
+  after it. If a stream's first record in the file is a restart whose
+  earlier segment is missing, records before it cannot be checked. Records
+  cut off at the end of a stream, and a stream removed entirely, are not
+  detectable without an anchor outside the file, and whoever controls the
+  file can rewrite and re-seal all of it.
 - It is not a broker, historian, dashboard or rules engine.
 
 Known limits (the OPC UA F/G corrections below are unreleased; 0.1.2 still
