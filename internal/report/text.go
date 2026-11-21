@@ -35,11 +35,14 @@ func (r *Report) VerifySummary() string {
 
 // Scope is what verification covers and what it does not, in the words of
 // the README, "What it does not do". Every report ends with it.
-const Scope = "What verification covers: every record's hashes recompute and each record links to the one before it, " +
-	"so no record was edited, removed, inserted or reordered without re-sealing everything after it. " +
-	"What it does not cover: whoever controls the file can rewrite and re-seal all of it; records cut off at the end of the journal " +
-	"are not detectable without an anchor outside it; the context fields of the records (site, line, device, host) are not covered " +
-	"by any hash, so this report does not show them; and nothing in a journal shows that the values were true."
+const Scope = "What verification covers: every record's hashes recompute, and from each stream's first record in this file onwards " +
+	"each record links to the one before it; within that range no record was edited, removed, inserted or reordered " +
+	"without re-sealing everything after it. " +
+	"What it does not cover: if a stream's first record in this file is a restart whose earlier segment is not in the file " +
+	"(shown as a notice), records before it cannot be checked; records cut off at the end of a stream, and a stream removed entirely, " +
+	"are not detectable without an anchor outside the file; whoever controls the file can rewrite and re-seal all of it; " +
+	"the context fields of the records (site, line, device, host) are not covered by any hash, so this report does not show them; " +
+	"and nothing in a journal shows that the values were true."
 
 // Verdict explains the verification result above the details.
 func (r *Report) Verdict() string {

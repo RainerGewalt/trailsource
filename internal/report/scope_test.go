@@ -3,6 +3,7 @@ package report
 import (
 	"bytes"
 	"encoding/json"
+	stdhtml "html"
 	"strings"
 	"testing"
 
@@ -125,6 +126,85 @@ func TestVerdictClaimsOnlyWhatWasChecked(t *testing.T) {
 	}
 	if text := strings.Join(strings.Fields(renderText(t, r)), " "); !strings.Contains(text, v) {
 		t.Errorf("text report does not carry the FAIL verdict")
+	}
+}
+
+// The scope statement at the end of every report claims only what
+// verification checked, like the verdict. Chain links are checked from each
+// stream's first record in the file onwards: a journal cut at its start to
+// an ordinary record fails, but one that begins with a restart whose earlier
+// segment is missing verifies with a notice, and one cut off at the end of
+// a stream verifies as well. The statement must say so in text and HTML, in
+// every state.
+func TestScopeClaimsOnlyWhatWasChecked(t *testing.T) {
+	raw := loadFixture(t)
+	lines := bytes.SplitAfter(bytes.TrimRight(raw, "\n"), []byte("\n"))
+	var midStream []byte // from the restart at seq 12: the earlier segment is missing
+	for i, l := range lines {
+		if i > 0 && bytes.Contains(l, []byte(`"chain_restart":true`)) {
+			midStream = bytes.Join(lines[i:], nil)
+			break
+		}
+	}
+	if midStream == nil {
+		t.Fatal("fixture has no restart after its first record")
+	}
+	headCut := bytes.Join(lines[1:], nil)            // starts at seq 1, an ordinary record
+	tailCut := bytes.Join(lines[:len(lines)-2], nil) // the last two records are gone
+	tampered := bytes.Replace(raw, []byte(`"value":191`), []byte(`"value":199`), 1)
+
+	// The behaviour the statement describes.
+	for name, c := range map[string]struct {
+		journal []byte
+		ok      bool
+		detail  string
+	}{
+		"head cut to an ordinary record": {headCut, false, "is not genesis and not a restart"},
+		"mid-stream from a restart":      {midStream, true, "previous segment not in this journal"},
+		"tail cut":                       {tailCut, true, ""},
+	} {
+		r, err := Build("journal.jsonl", c.journal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.OK != c.ok {
+			t.Fatalf("%s: ok=%v, want %v (%s)", name, r.OK, c.ok, r.VerifySummary())
+		}
+		found := c.detail == ""
+		for _, is := range r.Verify.Issues {
+			found = found || strings.Contains(is.Detail, c.detail)
+		}
+		if !found {
+			t.Fatalf("%s: no finding or notice with %q: %+v", name, c.detail, r.Verify.Issues)
+		}
+	}
+
+	// The statement itself.
+	for name, journal := range map[string][]byte{"ok": raw, "mid-stream": midStream, "tail cut": tailCut, "fail": tampered, "empty": nil} {
+		r, err := Build(name+".jsonl", journal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for format, out := range map[string]string{"html": stdhtml.UnescapeString(renderHTML(t, r)), "text": renderText(t, r)} {
+			out = strings.Join(strings.Fields(out), " ") // the text form is wrapped
+			for _, claim := range []string{"each record links to the one before it, so", "cut off at the end of the journal"} {
+				if strings.Contains(out, claim) {
+					t.Errorf("%s %s: the scope statement claims more than was checked: %q", name, format, claim)
+				}
+			}
+			for _, want := range []string{
+				"from each stream's first record in this file onwards",
+				"records before it cannot be checked",
+				"cut off at the end of a stream",
+				"a stream removed entirely",
+				"anchor outside the file",
+				"re-seal all of it",
+			} {
+				if !strings.Contains(out, want) {
+					t.Errorf("%s %s: the scope statement lacks %q", name, format, want)
+				}
+			}
+		}
 	}
 }
 
