@@ -112,7 +112,7 @@ connect ──> browse ──> reconcile ──> subscribe ──(rebrowse timer
 
 ## Emit order
 
-The following OPC UA hardening is unreleased; versions through 0.1.2 save
+The following order applies from 0.1.3 on; versions through 0.1.2 save
 chain state before appending and publish synchronously.
 
 For every record with journaling enabled: seal (assign `seq`, `prev_hash`

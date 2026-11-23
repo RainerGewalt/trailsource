@@ -5,6 +5,53 @@ Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+## 0.1.3 - 2026-11-23
+
+A correction release: no new features, connectors or configuration. It
+closes two findings of the quality audit of 8 November 2026 that 0.1.2 had
+left open, and one statement in the report that said more than the
+verifier checks.
+
+### Fixed
+
+- **The journal is written before the chain state.** Through 0.1.2 the
+  adapter saved the chain state first and appended the record afterwards,
+  so a failed or short write left a state that had already counted a
+  record the journal did not hold. A record is now appended and synced
+  before the state is saved. A write error, a short write, a sync error or
+  a failed state commit stops recording and the adapter.
+- **Start-up reconciles state and journal.** An existing journal is checked
+  at start. If the state is behind it, ahead of it or missing, the stream
+  continues with a declared restart anchored at the end of the journal;
+  the earlier state, the journal position and the observed difference are
+  part of the hashed payload, and the text and HTML reports show the
+  boundary. Sequence numbers that may already have been published are not
+  reused. An invalid journal, a line with more than one JSON value, or a
+  different hash for the same sequence number stops the start; existing
+  journal bytes are never repaired or re-sealed.
+- **Recording no longer waits for MQTT.** Through 0.1.2 a broker outage
+  held up the recording loop, and journal records fell behind the time they
+  were read. Delivery now runs from a bounded in-memory queue of 256
+  records; the local journal continues independently. Records dropped on
+  overflow, without a connection or at stop are counted as dropped; failed
+  or timed-out attempts are counted separately as unconfirmed, because a
+  timeout does not prove a loss. Health reports both counters, successful
+  attempts and the queue depth. There is no durable outbox and no replay.
+- **The scope statement of every report says what verification checked.**
+  It said that each record links to the one before it. Links are checked
+  from each stream's first record in the file onwards. A journal that
+  begins with a restart whose earlier segment is not in the file verifies
+  with a notice, so records before it cannot be checked; records cut off
+  at the end of a stream, and a stream removed entirely, are not
+  detectable without an anchor outside the file. The statement, the
+  README and the help page now say so. The hash checks themselves are
+  unchanged.
+
+### Changed
+
+- The README screenshot is retaken with the current verdict; its alt text
+  names what it shows.
+
 ## 0.1.2 - 2026-11-15
 
 A correction release: no new features. It addresses the quality audit of

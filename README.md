@@ -232,8 +232,8 @@ trail-evidence-py verify journal/<source-id>.jsonl
   file can rewrite and re-seal all of it.
 - It is not a broker, historian, dashboard or rules engine.
 
-Known limits (the OPC UA F/G corrections below are unreleased; 0.1.2 still
-waits for MQTT in the recording loop and saves chain state before the journal):
+Known limits (as of 0.1.3; versions through 0.1.2 wait for MQTT in the
+recording loop and save chain state before the journal):
 
 - MQTT delivery uses a bounded in-memory queue of 256 records. Overflow
   and disconnected sends are dropped from transport; failed or timed-out
@@ -278,8 +278,8 @@ Container image (linux/amd64, linux/arm64, runs as uid 10001, contains the
 OPC UA adapter only):
 
 ```sh
-docker pull ghcr.io/rainergewalt/trailsource:0.1.2
-docker run --rm ghcr.io/rainergewalt/trailsource:0.1.2 endpoints opc.tcp://<your-server>:4840
+docker pull ghcr.io/rainergewalt/trailsource:0.1.3
+docker run --rm ghcr.io/rainergewalt/trailsource:0.1.3 endpoints opc.tcp://<your-server>:4840
 ```
 
 Replace `<your-server>` with the host of your OPC UA server; the container
@@ -300,7 +300,7 @@ docker run --rm --read-only --user "$(id -u):$(id -g)" \
   -v "$PWD/configs/mapping:/config/mapping:ro" \
   -v "$PWD/pki:/pki" -v "$PWD/state:/state" -v "$PWD/journal:/journal" \
   -e TRAILSOURCE_OPCUA_USERNAME -e TRAILSOURCE_OPCUA_PASSWORD \
-  ghcr.io/rainergewalt/trailsource:0.1.2 run --config /config/trailsource.yaml
+  ghcr.io/rainergewalt/trailsource:0.1.3 run --config /config/trailsource.yaml
 ```
 
 TrailSource only reads from the server; `--read-only` also keeps the

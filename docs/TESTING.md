@@ -24,7 +24,7 @@ list against generated certificate chains with and without revocation lists
 (`internal/report`, `testdata/report`), the command line (`cmd/trailsource`).
 `make test`; needs nothing.
 
-The unreleased OPC UA F/G hardening adds deterministic failures in the
+The OPC UA hardening of 0.1.3 adds deterministic failures in the
 existing L1/L2 gate: journal write, short write and sync failures; a state
 save failing after a durable append; state ahead of/behind the journal
 and missing state; conflicting hashes, malformed/truncated journals,
