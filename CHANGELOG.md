@@ -5,7 +5,23 @@ Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
-## 0.1.3 - 2026-11-23
+## 0.1.4 - 2026-11-24
+
+The first published release after 0.1.2. It contains everything listed
+under 0.1.3 and one dependency update.
+
+### Security
+
+- `github.com/gorilla/websocket` moves from v1.5.3 to the upstream commit
+  that fixes GO-2026-6278 (GHSA-w67g-5rqw-f597, a weak random source for
+  the WebSocket mask key). The module is an indirect dependency of the MQTT
+  client and is used only for `ws://` and `wss://` broker addresses.
+  `govulncheck` reports it as reachable, so the release gate stopped 0.1.3.
+
+## 0.1.3 - 2026-11-23 (tagged, not published)
+
+The tag `v0.1.3` exists, but the release workflow stopped at `govulncheck`
+before any archive or image was built. Use 0.1.4.
 
 A correction release: no new features, connectors or configuration. It
 closes two findings of the quality audit of 8 November 2026 that 0.1.2 had
